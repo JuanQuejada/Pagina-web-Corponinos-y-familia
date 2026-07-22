@@ -1,143 +1,175 @@
-'use client';
+"use client";
 
-import { ChangeEvent } from 'react';
+import { Camera, Trash2, Upload } from "lucide-react";
+import { Usuario } from "@/types";
 import {
-  Camera,
-  Trash2,
-} from 'lucide-react';
-
-import {
-  obtenerIniciales,
   obtenerColorAvatar,
-} from '@/lib/utils';
-
-import { Usuario } from '@/types';
+  obtenerIniciales,
+} from "@/lib/utils";
 
 interface PerfilAvatarProps {
   usuario: Usuario;
   fotoPreview: string | null;
-  onFotoSeleccionada: (file: File | null) => void;
+  onFotoSeleccionada: (
+    archivo: File | null
+  ) => void;
   onEliminarFoto: () => void;
 }
 
 export default function PerfilAvatar({
+
   usuario,
+
   fotoPreview,
+
   onFotoSeleccionada,
+
   onEliminarFoto,
+
 }: PerfilAvatarProps) {
-  const seleccionarFoto = (e: ChangeEvent<HTMLInputElement>) => {
-    const archivo = e.target.files?.[0];
 
-    if (!archivo) return;
+  //------------------------------------------------------
+  // Nombre a mostrar
+  //------------------------------------------------------
 
-    onFotoSeleccionada(archivo);
-  };
+  const nombreMostrar =
+  usuario.tipo_persona === "natural"
+    ? `${usuario.nombres ?? ""} ${usuario.apellidos ?? ""}`.trim() ||
+      "Usuario"
+    : usuario.razon_social?.trim() ||
+      "Usuario";
 
-  const imagen = fotoPreview || usuario.foto_url;
+  //------------------------------------------------------
+  // Imagen
+  //------------------------------------------------------
+
+  const imagen =
+    fotoPreview ??
+    usuario.foto_url ??
+    null;
+
+  //------------------------------------------------------
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-
-      <h2 className="text-lg font-semibold text-gray-900 mb-6">
-        Foto de Perfil
-      </h2>
-
+    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      {/* Encabezado */}
       <div className="flex flex-col items-center">
-
         {/* Avatar */}
+        <div className="relative">
+          {imagen ? (
+            <img
+              src={imagen}
+              alt="Foto de perfil"
+              className="h-36 w-36 rounded-full object-cover border-4 border-white shadow-md"
+            />
+          ) : (
+            <div
+              className="flex h-36 w-36 items-center justify-center rounded-full text-4xl font-bold text-white shadow-md"
+              style={{
+                background:
+                  obtenerColorAvatar(usuario.id),
+              }}
+            >
+              {obtenerIniciales(
+                usuario
+              )}
+            </div>
+          )}
+        </div>
 
-        {imagen ? (
-          <img
-            src={imagen}
-            alt="Foto de perfil"
-            className="w-40 h-40 rounded-full object-cover border-4 border-gray-200"
-          />
-        ) : (
-          <div
-            className="w-40 h-40 rounded-full flex items-center justify-center text-white text-5xl font-bold border-4 border-gray-200"
-            style={{
-              background: obtenerColorAvatar(usuario.id),
-            }}
-          >
-            {obtenerIniciales(
-              usuario.nombres,
-              usuario.apellidos
-            )}
-          </div>
-        )}
+        {/* Nombre */}
 
-        <div className="mt-6 flex flex-col gap-3 w-full">
+        <h2 className="mt-5 text-center text-xl font-bold text-gray-900">
 
-          {/* Cambiar Foto */}
+          {nombreMostrar}
 
-          <label
-            htmlFor="fotoPerfil"
-            className="
-              cursor-pointer
-              flex
-              items-center
-              justify-center
-              gap-2
-              bg-primary
-              hover:bg-primary/90
-              text-white
-              rounded-xl
-              py-3
-              transition
-            "
-          >
-            <Camera className="w-5 h-5" />
+        </h2>
 
-            Cambiar Foto
-          </label>
+        {/* Cargo */}
+
+        <p className="mt-1 text-center text-sm text-gray-600">
+
+          {usuario.cargo ?? "Sin cargo asignado"}
+
+        </p>
+
+        {/* Área */}
+
+        <span className="mt-2 rounded-full bg-teal-50 px-4 py-1 text-xs font-semibold text-teal-700">
+
+          {usuario.area?.nombre ??
+            "Sin área asignada"}
+
+        </span>
+
+      </div>
+
+      {/* Acciones */}
+
+      <div className="mt-8 space-y-3">
+
+        <label
+          className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-teal-600 bg-teal-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        >
+
+          <Upload className="h-4 w-4" />
+
+          Cambiar fotografía
 
           <input
-            id="fotoPerfil"
             type="file"
             accept="image/*"
-            className="hidden"
-            onChange={seleccionarFoto}
+            hidden
+            onChange={(e) =>
+              onFotoSeleccionada(
+                e.target.files?.[0] ?? null
+              )
+            }
           />
 
-          {/* Eliminar */}
+        </label>
 
-          {imagen && (
-            <button
-              type="button"
-              onClick={onEliminarFoto}
-              className="
-                flex
-                items-center
-                justify-center
-                gap-2
-                border
-                border-red-300
-                text-red-600
-                hover:bg-red-50
-                rounded-xl
-                py-3
-                transition
-              "
-            >
-              <Trash2 className="w-5 h-5" />
+        <button
+          onClick={onEliminarFoto}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-100"
+        >
 
-              Eliminar Foto
-            </button>
-          )}
+          <Trash2 className="h-4 w-4" />
+
+          Eliminar fotografía
+
+        </button>
+
+      </div>
+
+      {/* Información */}
+
+      <div className="mt-8 border-t border-gray-200 pt-5">
+
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+
+          <Camera className="h-4 w-4" />
+
+          <span>
+
+            Formatos permitidos:
+            JPG, PNG y WEBP.
+
+          </span>
 
         </div>
 
-        <p className="mt-5 text-sm text-center text-gray-500 leading-relaxed">
-          Formatos permitidos:
-          <br />
-          JPG, PNG o WEBP
-          <br />
-          Tamaño máximo: 2 MB.
+        <p className="mt-2 text-xs text-gray-400">
+
+          Tamaño máximo recomendado:
+          5 MB.
+
         </p>
 
       </div>
 
     </div>
+
   );
+
 }

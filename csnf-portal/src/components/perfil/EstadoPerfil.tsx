@@ -2,116 +2,144 @@
 
 import {
   CheckCircle2,
-  AlertTriangle,
-  Lock,
+  AlertCircle,
+  ShieldCheck,
   UserCheck,
+  Activity,
 } from 'lucide-react';
 
 interface EstadoPerfilProps {
   perfilCompleto: boolean;
   passwordCambiada: boolean;
+  activo?: boolean;
 }
 
 export default function EstadoPerfil({
   perfilCompleto,
   passwordCambiada,
+  activo = true,
 }: EstadoPerfilProps) {
-  return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+  //-------------------------------------------------------
+  // Porcentaje de completitud
+  //-------------------------------------------------------
 
-      <h2 className="text-lg font-semibold text-gray-900 mb-6">
-        Estado del Perfil
+  let progreso = 0;
+
+  if (perfilCompleto) progreso += 35;
+  if (passwordCambiada) progreso += 35;
+  if (activo) progreso += 30;
+
+  //-------------------------------------------------------
+
+  const EstadoItem = ({
+    titulo,
+    activo,
+    icono,
+    textoActivo,
+    textoInactivo,
+  }: {
+    titulo: string;
+    activo: boolean;
+    icono: React.ReactNode;
+    textoActivo: string;
+    textoInactivo: string;
+  }) => (
+    <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-gray-50 p-4">
+
+      <div className="flex items-center gap-3">
+
+        <div
+          className={`rounded-full p-2 ${
+            activo
+              ? 'bg-emerald-100 text-emerald-600'
+              : 'bg-amber-100 text-amber-600'
+          }`}
+        >
+          {icono}
+        </div>
+
+        <div>
+
+          <p className="text-sm font-semibold text-gray-800">
+            {titulo}
+          </p>
+
+          <p className="text-xs text-gray-500">
+            {activo ? textoActivo : textoInactivo}
+          </p>
+
+        </div>
+
+      </div>
+
+      {activo ? (
+        <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+      ) : (
+        <AlertCircle className="h-5 w-5 text-amber-500" />
+      )}
+
+    </div>
+  );
+
+  //-------------------------------------------------------
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+
+      <h2 className="mb-6 text-lg font-semibold text-gray-900">
+        Estado de la Cuenta
       </h2>
 
       <div className="space-y-4">
 
-        {/* Perfil */}
+        <EstadoItem
+          titulo="Perfil"
+          activo={perfilCompleto}
+          textoActivo="Información completa"
+          textoInactivo="Faltan datos por completar"
+          icono={<UserCheck className="h-5 w-5" />}
+        />
 
-        <div className="flex items-center justify-between rounded-xl border border-gray-200 p-4">
+        <EstadoItem
+          titulo="Seguridad"
+          activo={passwordCambiada}
+          textoActivo="Contraseña actualizada"
+          textoInactivo="Debe actualizar la contraseña"
+          icono={<ShieldCheck className="h-5 w-5" />}
+        />
 
-          <div className="flex items-center gap-3">
+        <EstadoItem
+          titulo="Cuenta"
+          activo={activo}
+          textoActivo="Cuenta activa"
+          textoInactivo="Cuenta inactiva"
+          icono={<Activity className="h-5 w-5" />}
+        />
 
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                perfilCompleto
-                  ? 'bg-green-100'
-                  : 'bg-yellow-100'
-              }`}
-            >
-              {perfilCompleto ? (
-                <UserCheck className="w-5 h-5 text-green-600" />
-              ) : (
-                <AlertTriangle className="w-5 h-5 text-yellow-600" />
-              )}
-            </div>
+      </div>
 
-            <div>
+      <div className="mt-8">
 
-              <p className="font-medium text-gray-800">
-                Información Personal
-              </p>
+        <div className="mb-2 flex items-center justify-between">
 
-              <p className="text-sm text-gray-500">
-                {perfilCompleto
-                  ? 'Perfil completamente diligenciado.'
-                  : 'Faltan datos por completar.'}
-              </p>
+          <span className="text-sm font-medium text-gray-700">
+            Nivel de completitud
+          </span>
 
-            </div>
-
-          </div>
-
-          {perfilCompleto ? (
-            <CheckCircle2 className="text-green-600 w-6 h-6" />
-          ) : (
-            <AlertTriangle className="text-yellow-500 w-6 h-6" />
-          )}
+          <span className="text-sm font-bold text-primary">
+            {progreso}%
+          </span>
 
         </div>
 
-        {/* Contraseña */}
+        <div className="h-3 overflow-hidden rounded-full bg-gray-200">
 
-        <div className="flex items-center justify-between rounded-xl border border-gray-200 p-4">
-
-          <div className="flex items-center gap-3">
-
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                passwordCambiada
-                  ? 'bg-green-100'
-                  : 'bg-red-100'
-              }`}
-            >
-              <Lock
-                className={`w-5 h-5 ${
-                  passwordCambiada
-                    ? 'text-green-600'
-                    : 'text-red-600'
-                }`}
-              />
-            </div>
-
-            <div>
-
-              <p className="font-medium text-gray-800">
-                Contraseña
-              </p>
-
-              <p className="text-sm text-gray-500">
-                {passwordCambiada
-                  ? 'La contraseña ya fue actualizada.'
-                  : 'Debe cambiar la contraseña inicial.'}
-              </p>
-
-            </div>
-
-          </div>
-
-          {passwordCambiada ? (
-            <CheckCircle2 className="text-green-600 w-6 h-6" />
-          ) : (
-            <AlertTriangle className="text-red-500 w-6 h-6" />
-          )}
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{
+              width: `${progreso}%`,
+            }}
+          />
 
         </div>
 

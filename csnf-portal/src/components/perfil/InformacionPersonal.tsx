@@ -4,203 +4,315 @@ import { Usuario } from '@/types';
 
 interface InformacionPersonalProps {
   usuario: Usuario;
-  onChange: (campo: string, valor: string) => void;
+  onChange: (
+    campo: keyof Usuario,
+    valor: string | null
+  ) => void;
 }
 
 export default function InformacionPersonal({
   usuario,
   onChange,
 }: InformacionPersonalProps) {
+
   const esPersonaNatural =
     usuario.tipo_persona === 'natural';
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
 
-      <h2 className="text-lg font-semibold text-gray-900 mb-6">
-        Información Personal
-      </h2>
+      {/* ==========================================================
+          TÍTULO
+      ========================================================== */}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="mb-6">
+
+        <h2 className="text-xl font-bold text-gray-900">
+          Información Personal
+        </h2>
+
+        <p className="mt-1 text-sm text-gray-500">
+          Información básica registrada para el usuario.
+        </p>
+
+      </div>
+
+      {/* ==========================================================
+          INFORMACIÓN GENERAL
+      ========================================================== */}
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
 
         {/* Tipo Persona */}
 
         <div>
-          <label
-            htmlFor="tipoPersona"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Tipo de Persona
           </label>
 
           <input
-            id="tipoPersona"
+            disabled
             value={
-              usuario.tipo_persona === 'natural'
+              esPersonaNatural
                 ? 'Persona Natural'
                 : 'Persona Jurídica'
             }
-            disabled
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
         </div>
 
         {/* Tipo Usuario */}
 
         <div>
-          <label
-            htmlFor="tipoUsuario"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Tipo de Usuario
           </label>
 
           <input
-            id="tipoUsuario"
-            value={usuario.tipo_usuario ?? ''}
             disabled
+            value={usuario.tipo_usuario ?? ''}
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
         </div>
 
-        {/* Persona Natural */}
+        {/* ======================================================
+            PERSONA NATURAL
+        ====================================================== */}
 
         {esPersonaNatural ? (
+
           <>
+
             <div>
-              <label
-                htmlFor="nombres"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
+
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Nombres
               </label>
 
               <input
-                id="nombres"
-                value={usuario.nombres ?? ''}
                 disabled
+                value={usuario.nombres ?? ''}
                 className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
               />
+
             </div>
 
             <div>
-              <label
-                htmlFor="apellidos"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
+
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Apellidos
               </label>
 
               <input
-                id="apellidos"
-                value={usuario.apellidos ?? ''}
                 disabled
+                value={usuario.apellidos ?? ''}
                 className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
               />
+
             </div>
+
           </>
+
         ) : (
+
           <div className="md:col-span-2">
-            <label
-              htmlFor="razonSocial"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
+
+            <label className="mb-2 block text-sm font-medium text-gray-700">
               Razón Social
             </label>
 
             <input
-              id="razonSocial"
-              value={usuario.razon_social ?? ''}
               disabled
+              value={usuario.razon_social ?? ''}
               className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
             />
+
           </div>
+
         )}
 
-        {/* Documento */}
+        {/* Tipo Documento */}
 
         <div>
-          <label
-            htmlFor="tipoDocumento"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Tipo de Documento
           </label>
 
           <input
-            id="tipoDocumento"
-            value={usuario.tipo_documento ?? ''}
             disabled
+            value={usuario.tipo_documento ?? ''}
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
         </div>
 
+        {/* Número Documento */}
+
         <div>
-          <label
-            htmlFor="numeroDocumento"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Número de Documento
           </label>
 
           <input
-            id="numeroDocumento"
-            value={usuario.numero_documento ?? ''}
             disabled
+            value={usuario.numero_documento ?? ''}
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
+        </div>
+
+        {/* Correo */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Correo Electrónico
+          </label>
+
+          <input
+            disabled
+            value={usuario.email}
+            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
+          />
+
         </div>
 
         {/* Teléfono */}
 
         <div>
-          <label
-            htmlFor="telefono"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Teléfono
           </label>
 
           <input
-            id="telefono"
-            value={usuario.telefono ?? ''}
             disabled
+            value={usuario.telefono ?? ''}
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
         </div>
 
         {/* Dirección */}
 
-        <div>
-          <label
-            htmlFor="direccion"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
+        <div className="md:col-span-2">
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
             Dirección
           </label>
 
           <input
-            id="direccion"
-            value={usuario.direccion ?? ''}
             disabled
+            value={usuario.direccion ?? ''}
             className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
           />
+
         </div>
 
-        {/* Fecha nacimiento */}
+      </div>
+
+      {/* ==========================================================
+          INFORMACIÓN ORGANIZACIONAL
+      ========================================================== */}
+
+      <div className="my-8 border-t border-gray-200"></div>
+
+      <div className="mb-6">
+
+        <h2 className="text-xl font-bold text-gray-900">
+          Información Organizacional
+        </h2>
+
+        <p className="mt-1 text-sm text-gray-500">
+          Información relacionada con la vinculación dentro de la organización.
+        </p>
+
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+        {/* Área */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Área
+          </label>
+
+          <input
+            disabled
+            value={usuario.area?.nombre ?? 'No asignada'}
+            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
+          />
+
+        </div>
+
+        {/* Departamento */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Departamento
+          </label>
+
+          <input
+            disabled
+            value={usuario.departamento?.nombre ?? 'No asignado'}
+            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
+          />
+
+        </div>
+
+        {/* Cargo */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Cargo
+          </label>
+
+          <input
+            disabled
+            value={usuario.cargo ?? 'Asignado al área'}
+            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
+          />
+
+        </div>
+
+        {/* Fecha Vinculación */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Fecha de Vinculación
+          </label>
+
+          <input
+            disabled
+            type="date"
+            value={usuario.fecha_vinculacion ?? ''}
+            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
+          />
+
+        </div>
+
+        {/* Fecha Nacimiento */}
 
         {esPersonaNatural && (
+
           <div>
-            <label
-              htmlFor="fechaNacimiento"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
+
+            <label className="mb-2 block text-sm font-medium text-gray-700">
               Fecha de Nacimiento
             </label>
 
             <input
-              id="fechaNacimiento"
-              name="fechaNacimiento"
               type="date"
               value={usuario.fecha_nacimiento ?? ''}
               onChange={(e) =>
@@ -211,7 +323,9 @@ export default function InformacionPersonal({
               }
               className="w-full rounded-xl border border-gray-300 p-3"
             />
+
           </div>
+
         )}
 
       </div>
