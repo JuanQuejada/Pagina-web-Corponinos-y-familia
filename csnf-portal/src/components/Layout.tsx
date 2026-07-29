@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
 import Header from './Header';
-import { storage } from '@/lib/utils';
 import { Usuario } from '@/types';
 
 interface LayoutProps {
@@ -19,9 +18,10 @@ export default function Layout({ children, titulo, breadcrumb }: LayoutProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
 
-    const token = storage.get('token');
-    const userData = storage.get('usuario');
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('usuario');
 
     if (!token) {
       router.push('/login');
@@ -29,15 +29,21 @@ export default function Layout({ children, titulo, breadcrumb }: LayoutProps) {
     }
 
     if (userData) {
-      setUsuario(userData);
+      try {
+        setUsuario(JSON.parse(userData));
+      } catch (e) {
+        console.error("Error al parsear el usuario del localStorage:", e);
+      }
     }
 
     setLoading(false);
   }, [router]);
 
   const handleLogout = () => {
-    storage.remove('token');
-    storage.remove('usuario');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('usuario');
+    }
     router.push('/login');
   };
 

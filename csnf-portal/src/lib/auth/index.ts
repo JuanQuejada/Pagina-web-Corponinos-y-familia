@@ -4,5 +4,5 @@
 
 export * from "./auth-client";
 export * from "./auth-server";
+export * from "./profile";
 export * from "./session";
-export * from "./permissions";

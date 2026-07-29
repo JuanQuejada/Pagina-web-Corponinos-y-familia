@@ -5,147 +5,144 @@ import {
   useContext,
   useEffect,
   useState,
+  ReactNode,
 } from "react";
 
-import { Usuario } from "@/types";
+import type {
+  UsuarioPortal,
+} from "@/types";
 
+import {
+  obtenerSesionPortal,
+  cerrarSesion as cerrarSesionPortal,
+} from "@/lib/auth/session";
+
+// ============================================================
+// CONTEXTO
+// ============================================================
 
 interface AuthContextType {
-
-  usuario: Usuario | null;
-
-  actualizarUsuario: (
-    usuario: Usuario
-  ) => void;
-
-  cerrarSesion: () => void;
-
+  usuarioPortal: UsuarioPortal | null;
   cargando: boolean;
-
+  autenticado: boolean;
+  actualizarSesion: () => Promise<void>;
+  cerrarSesion: () => Promise<void>;
+  // 1. Agrega la propiedad aquí para que TypeScript la reconozca
+  actualizarDatosUsuario: (nuevosDatos: Partial<UsuarioPortal>) => void; 
 }
 
-
 const AuthContext =
-createContext<AuthContextType | undefined>(
-  undefined
-);
+  createContext<AuthContextType | undefined>(
+    undefined
+  );
 
-
+// ============================================================
+// PROVIDER
+// ============================================================
 
 export function AuthProvider({
   children,
-}:{
-  children: React.ReactNode;
+}: {
+  children: ReactNode;
 }) {
 
+  const [
+    usuarioPortal,
+    setUsuarioPortal,
+  ] = useState<UsuarioPortal | null>(
+    null
+  );
 
-  const [usuario,setUsuario] =
-    useState<Usuario | null>(null);
+  const [
+    cargando,
+    setCargando,
+  ] = useState(true);
 
+  // ==========================================================
+  // ACTUALIZAR SESIÓN
+  // ==========================================================
 
-  const [cargando,setCargando] =
-    useState(true);
+  async function actualizarSesion() {
+    setCargando(true);
 
+    const respuesta =
+      await obtenerSesionPortal();
 
-
-  useEffect(()=>{
-
-
-    const usuarioGuardado =
-      localStorage.getItem("usuario");
-
-
-    if(usuarioGuardado){
-
-      setUsuario(
-        JSON.parse(usuarioGuardado)
+    if (
+      respuesta.success &&
+      respuesta.data
+    ) {
+      setUsuarioPortal(
+        respuesta.data.usuario
       );
-
+    } else {
+      setUsuarioPortal(null);
     }
 
-
     setCargando(false);
+  }
 
+  // ==========================================================
+  // ACTUALIZAR DATOS LOCALES DEL USUARIO (NUEVO)
+  // ==========================================================
+  
+  // 2. Implementa la función por si quieres refrescar o modificar datos en caliente
+  function actualizarDatosUsuario(nuevosDatos: Partial<UsuarioPortal>) {
+    setUsuarioPortal((prev) => {
+      if (!prev) return null;
+      return { ...prev, ...nuevosDatos };
+    });
+  }
 
-  },[]);
+  // ==========================================================
+  // CARGAR SESIÓN AL INICIAR
+  // ==========================================================
 
+  useEffect(() => {
+    actualizarSesion();
+  }, []);
 
+  // ==========================================================
+  // CERRAR SESIÓN
+  // ==========================================================
 
-  const actualizarUsuario = (
-    nuevoUsuario: Usuario
-  )=>{
-
-
-    setUsuario(nuevoUsuario);
-
-
-    localStorage.setItem(
-      "usuario",
-      JSON.stringify(nuevoUsuario)
-    );
-
-
-  };
-
-
-
-  const cerrarSesion = ()=>{
-
-
-    localStorage.removeItem(
-      "usuario"
-    );
-
-
-    localStorage.removeItem(
-      "token"
-    );
-
-
-    setUsuario(null);
-
-
-  };
-
-
+  async function cerrarSesion() {
+    await cerrarSesionPortal();
+    setUsuarioPortal(null);
+  }
 
   return (
-
     <AuthContext.Provider
       value={{
-        usuario,
-        actualizarUsuario,
-        cerrarSesion,
+        usuarioPortal,
         cargando,
+        autenticado:
+          usuarioPortal !== null,
+        actualizarSesion,
+        cerrarSesion,
+        // 3. Exponla en el value del Provider
+        actualizarDatosUsuario, 
       }}
     >
-
       {children}
-
     </AuthContext.Provider>
-
   );
 
 }
 
+// ============================================================
+// HOOK
+// ============================================================
 
-
-export function useAuth(){
-
-
+export function useAuth() {
   const context =
     useContext(AuthContext);
 
-
-  if(!context){
-
+  if (!context) {
     throw new Error(
-      "useAuth debe usarse dentro de AuthProvider"
+      "useAuth debe utilizarse dentro de un AuthProvider."
     );
-
   }
 
-
   return context;
-
 }

@@ -79,7 +79,7 @@ export function obtenerNombreUsuario(
 
   if (!usuario) return "Usuario";
 
-  if (usuario.tipo_persona === "natural") {
+  if (usuario.tipo_persona_id === "natural") {
 
     const nombre = `${usuario.nombres ?? ""} ${usuario.apellidos ?? ""}`.trim();
 
@@ -99,7 +99,7 @@ export function obtenerNombreCompleto(
 
   if (!usuario) return "";
 
-  if (usuario.tipo_persona === "natural") {
+  if (usuario.tipo_persona_id === "natural") {
 
     return `${usuario.nombres ?? ""} ${usuario.apellidos ?? ""}`.trim();
 
@@ -119,7 +119,7 @@ export function obtenerIniciales(
 
   // Persona Natural
 
-  if (usuario.tipo_persona === "natural") {
+  if (usuario.tipo_persona_id === "natural") {
 
     const nombres = usuario.nombres?.trim().split(" ") ?? [];
 
@@ -216,13 +216,13 @@ export function obtenerDocumento(
     return "";
 
   if (
-    !usuario.tipo_documento ||
-    !usuario.numero_documento
+    !usuario.tipoIdentificacion ||
+    !usuario.numero_identificacion
   ) {
     return "";
   }
 
-  return `${usuario.tipo_documento} ${usuario.numero_documento}`;
+  return `${usuario.tipoIdentificacion} ${usuario.numero_identificacion}`;
 
 }
 

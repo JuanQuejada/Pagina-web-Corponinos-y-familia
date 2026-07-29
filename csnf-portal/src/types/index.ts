@@ -1,5 +1,13 @@
 // ============================================================
-// TYPES - CSNiños y Familia Portal
+// TYPES - PORTAL CSNF
+// Corporación Social Niños y Familia
+// Arquitectura Oficial v2.0
+// ============================================================
+
+import type { Database } from "@/lib/database/database.types";
+
+// ============================================================
+// TIPOS BASE
 // ============================================================
 
 export type UUID = string;
@@ -9,350 +17,292 @@ export type Json =
   | number
   | boolean
   | null
-  | { [key:string]:Json }
+  | { [key: string]: Json }
   | Json[];
 
 // ============================================================
-// RESPUESTAS GENERALES
+// ALIAS DE BASE DE DATOS
+// (NO MODIFICAR)
 // ============================================================
 
-export interface ApiResponse<T=unknown>{
-  success:boolean;
-  data?:T;
-  message?:string;
-  error?:string;
+type PublicSchema = Database["public"];
+
+export type DBTable<
+  T extends keyof PublicSchema["Tables"]
+> = PublicSchema["Tables"][T]["Row"];
+
+export type DBInsert<
+  T extends keyof PublicSchema["Tables"]
+> = PublicSchema["Tables"][T]["Insert"];
+
+export type DBUpdate<
+  T extends keyof PublicSchema["Tables"]
+> = PublicSchema["Tables"][T]["Update"];
+
+// ============================================================
+// RESPUESTAS API
+// ============================================================
+
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
 }
 
-export interface Paginacion<T>{
-  data:T[];
-  total:number;
-  pagina:number;
-  limite:number;
-  totalPaginas:number;
+export interface ApiListResponse<T> {
+  success: boolean;
+  data: T[];
+  total: number;
 }
+
+export interface Paginacion<T> {
+  data: T[];
+  total: number;
+  pagina: number;
+  limite: number;
+  total_paginas: number;
+}
+
+// ============================================================
+// TIPOS COMUNES
+// ============================================================
+
+export interface SelectOption {
+  value: UUID;
+  label: string;
+}
+
+export interface AuditoriaBasica {
+  created_at?: string;
+  updated_at?: string;
+  created_by?: UUID | null;
+  updated_by?: UUID | null;
+}
+
+// ============================================================
+// ALIAS DE TABLAS
+// ============================================================
+
+export type DBArea = DBTable<"areas">;
+
+export type DBDepartamento = DBTable<"departamentos">;
+
+export type DBCargo = DBTable<"cargos">;
+
+export type DBRol = DBTable<"roles">;
+
+export type DBUsuario = DBTable<"usuarios">;
+
+export type DBUsuarioAsignacion = DBTable<"usuarios_asignaciones">;
+
+export type DBTipoPersona = DBTable<"tipos_persona">;
+
+export type DBTipoIdentificacion = DBTable<"tipos_identificacion">;
+
+export type DBEstadoUsuario = DBTable<"estados_usuario">;
+
+export type DBModulo = DBTable<"modulos">;
+
+export type DBPermiso = DBTable<"permisos">;
+
+// ============================================================
+// CATÁLOGOS
+// ============================================================
+
+export interface TipoPersona extends DBTipoPersona {}
+
+export interface TipoIdentificacion extends DBTipoIdentificacion {
+  tipo_persona?: TipoPersona;
+}
+
+export interface EstadoUsuario extends DBEstadoUsuario {}
 
 // ============================================================
 // ORGANIZACIÓN
 // ============================================================
 
-export interface Rol{
-  id:UUID;
-  nombre:string;
-  descripcion?:string|null;
-  nivel:number;
-  permisos:Record<string,string[]>;
-  created_at?:string;
+export interface Area extends DBArea {}
+
+export interface Departamento extends DBDepartamento {
+  area?: Area;
 }
 
-export interface Area{
-  id:UUID;
-  nombre:string;
-  descripcion?:string|null;
-  orden:number;
-  activa:boolean;
-  created_at?:string;
-  updated_at?:string;
+export interface Cargo extends DBCargo {
+  departamento?: Departamento;
+  cargoSuperior?: Cargo | null;
 }
 
-export interface Departamento{
-  id:UUID;
-  area_id:UUID;
-  nombre:string;
-  descripcion?:string|null;
-  activo:boolean;
-  created_at?:string;
-  area?:Area;
+export interface Rol extends DBRol {
+  permisosSistema?: Permiso[];
+}
+
+export interface Modulo extends DBModulo {}
+
+export interface Permiso extends DBPermiso {
+  moduloRelacion?: Modulo;
+}
+
+// ============================================================
+// ASIGNACIÓN DE USUARIO
+// ============================================================
+
+export interface UsuarioAsignacion extends DBUsuarioAsignacion {
+  cargo?: Cargo;
+  rol?: Rol;
+}
+
+// ============================================================
+// PERFILES ACTIVOS
+// ============================================================
+
+export interface PerfilActivo {
+  asignacion: UsuarioAsignacion;
+  cargo: Cargo;
+  rol: Rol;
+  departamento?: Departamento;
+  area?: Area;
+}
+
+// ============================================================
+// NAVEGACIÓN
+// ============================================================
+
+export interface MenuItem {
+  id: string;
+  titulo: string;
+  icono?: string;
+  ruta: string;
+  modulo?: string;
+  permiso?: string;
+  hijos?: MenuItem[];
+}
+
+// ============================================================
+// BREADCRUMB
+// ============================================================
+
+export interface Breadcrumb {
+  titulo: string;
+  ruta?: string;
 }
 
 // ============================================================
 // USUARIO
 // ============================================================
 
-export type TipoPersona=
-  |"natural"
-  |"juridica";
+export interface Usuario extends Omit<DBUsuario, 'email' | 'foto_url' | 'avatar_url'> {
+  //----------------------------------------------------------
+  // Datos provenientes de Auth
+  //----------------------------------------------------------
+  email?: string;
 
-export type TipoUsuario=
-  |"Representante Legal"
-  |"Ejecutivo"
-  |"Jefe Área o Departamento"
-  |"Empleado"
-  |"Proveedor";
+  //----------------------------------------------------------
+  // Multimedia / Perfil
+  //----------------------------------------------------------
+  foto_url?: string | null;
 
-export type TipoDocumento=
-  |"CC"
-  |"CE"
-  |"Pasaporte"
-  |"NIT";
+  // Catálogos
+  tipoPersona?: TipoPersona;
+  tipoIdentificacion?: TipoIdentificacion;
+  estadoUsuario?: EstadoUsuario;
 
-export interface Usuario{
+  // Organización (Soporta objetos o strings para evitar incompatibilidades)
+  rol?: Rol | any;
+  cargo?: Cargo | any;
+  departamento?: Departamento;
+  area?: Area;
+}
 
-  id:UUID;
-  email:string;
-  password_hash?:string;
-  tipo_persona:TipoPersona;
-  tipo_usuario:TipoUsuario;
-  razon_social?:string|null;
-  nombres?:string|null;
-  apellidos?:string|null;
-  tipo_documento?:TipoDocumento|null;
-  numero_documento?:string|null;
-  telefono?:string|null;
-  direccion?:string|null;
-  fecha_nacimiento?:string|null;
-  foto_url?:string|null;
-  rol_id:UUID;
-  area_id?:UUID|null;
-  departamento_id?:UUID|null;
-  cargo?:string|null;
-  fecha_vinculacion?:string|null;
-  tipo_contrato?:string|null;
-  jefe_directo_id?:UUID|null;
-  perfil_completo:boolean;
-  password_cambiada:boolean;
-  activo:boolean;
-  ultimo_login?:string|null;
-  created_at?:string;
-  updated_at?:string;
-  created_by?:UUID|null;
-  rol?:Rol;
-  area?:Area;
-  departamento?:Departamento;
-  jefe_directo?:Usuario|null;
+// ============================================================
+// USUARIO DEL PORTAL
+// ============================================================
 
+export interface UsuarioPortal {
+  // ----------------------------------------------------------
+  // Información básica
+  // ----------------------------------------------------------
+  usuario: Usuario;
+
+  // ----------------------------------------------------------
+  // Asignaciones del usuario
+  // ----------------------------------------------------------
+  asignaciones: UsuarioAsignacion[];
+
+  // ----------------------------------------------------------
+  // Perfil actualmente seleccionado
+  // ----------------------------------------------------------
+  perfilActivo: PerfilActivo | null;
+
+  // ----------------------------------------------------------
+  // Accesos rápidos
+  // ----------------------------------------------------------
+  cargo?: Cargo;
+  rol?: Rol;
+  departamento?: Departamento;
+  area?: Area;
+
+  // ----------------------------------------------------------
+  // Seguridad
+  // ----------------------------------------------------------
+  permisos: Permiso[];
+  autenticado: boolean;
 }
 
 // ============================================================
 // SESIÓN
 // ============================================================
 
-export interface Sesion{
-
-  usuario:Usuario;
-  token:string;
-  expira:string;
-
+export interface SesionPortal {
+  usuario: UsuarioPortal;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt?: number;
 }
 
 // ============================================================
-// PERFIL PÚBLICO
+// LOGIN
 // ============================================================
 
-export interface PerfilUsuario{
-
-  id:UUID;
-  nombre:string;
-  foto_url?:string|null;
-  cargo?:string|null;
-  tipo_usuario:TipoUsuario;
-  area?:Area;
-  departamento?:Departamento;
-
-}
-// ============================================================
-// DOCUMENTOS
-// ============================================================
-
-export interface TipoDocumentoPortal{
-  id:UUID;
-  nombre:string;
-  descripcion?:string|null;
-  requiere_firma:boolean;
-  carpeta_drive:string;
-  orden:number;
-  activo:boolean;
+export interface CredencialesLogin {
+  email: string;
+  password: string;
 }
 
-export interface Documento{
-  id:UUID;
-  titulo:string;
-  descripcion?:string|null;
-  tipo_documento_id:UUID;
-  estado:string;
-  es_flujo_firma:boolean;
-  es_publicidad:boolean;
-  nombre_archivo?:string|null;
-  extension?:string|null;
-  tamano_bytes?:number|null;
-  mime_type?:string|null;
-  drive_file_id?:string|null;
-  drive_folder_id?:string|null;
-  drive_url?:string|null;
-  drive_folder_path?:string|null;
-  version:number;
-  versiones_anteriores?:Json;
-  firmas_requeridas:number;
-  firmas_completadas:number;
-  firmantes?:Json;
-  visible_para?:Json;
-  fecha_publicacion?:string|null;
-  autor_id:UUID;
-  area_id?:UUID|null;
-  aprobado_por?:UUID|null;
-  fecha_aprobacion?:string|null;
-  created_at?:string;
-  updated_at?:string;
-  autor?:Usuario;
-  area?:Area;
-  tipo_documento?:TipoDocumentoPortal;
+export interface ResultadoLogin {
+  success: boolean;
+  usuario?: UsuarioPortal;
+  message?: string;
+  error?: string;
 }
 
 // ============================================================
-// GOOGLE DRIVE
+// CAMBIO DE CONTRASEÑA
 // ============================================================
 
-export interface ArchivoDrive{
-  id:string;
-  name:string;
-  mimeType:string;
-  size?:string;
-  webViewLink?:string;
-  webContentLink?:string;
-  parents?:string[];
+export interface CambioPassword {
+  passwordActual: string;
+  passwordNueva: string;
+  confirmarPassword: string;
 }
 
 // ============================================================
-// AGENDA
+// PERFIL DE USUARIO
 // ============================================================
 
-export interface Evento{
-  id:UUID;
-  titulo:string;
-  descripcion?:string|null;
-  tipo:string;
-  fecha_inicio:string;
-  fecha_fin?:string|null;
-  todo_el_dia:boolean;
-  ubicacion?:string|null;
-  enlace_virtual?:string|null;
-  estado:string;
-  prioridad:string;
-  creador_id:UUID;
-  asignado_a?:UUID|null;
-  participantes?:Json;
-  recordatorio_minutos:number;
-  recordatorio_enviado:boolean;
-  documento_id?:UUID|null;
-  created_at?:string;
-  updated_at?:string;
-  creador?:Usuario;
-  responsable?:Usuario;
-  documento?:Documento;
-}
-
-// ============================================================
-// AUDITORÍA
-// ============================================================
-
-export interface Auditoria{
-  id:UUID;
-  usuario_id?:UUID|null;
-  accion:string;
-  entidad?:string|null;
-  entidad_id?:UUID|null;
-  detalles?:Json;
-  ip_address?:string|null;
-  user_agent?:string|null;
-  created_at?:string;
-  usuario?:PerfilUsuario;
-}
-
-// ============================================================
-// NOTIFICACIONES
-// ============================================================
-
-export interface Notificacion{
-  id:UUID;
-  usuario_id:UUID;
-  tipo:string;
-  titulo:string;
-  mensaje?:string|null;
-  entidad_tipo?:string|null;
-  entidad_id?:UUID|null;
-  url?:string|null;
-  leida:boolean;
-  fecha_lectura?:string|null;
-  created_at?:string;
+export interface ActualizarPerfil {
+  telefono?: string | null;
+  direccion?: string | null;
+  foto_url?: string | null;
 }
 
 // ============================================================
 // DASHBOARD
 // ============================================================
 
-export interface TarjetaDashboard{
-  titulo:string;
-  valor:number|string;
-  icono:string;
-  color:string;
-  descripcion?:string;
-}
-
-export interface AccesoRapido{
-  titulo:string;
-  descripcion:string;
-  icono:string;
-  href:string;
-  color:string;
-  permiso?:string;
-}
-
-export interface ActividadReciente{
-  id:UUID;
-  titulo:string;
-  descripcion:string;
-  fecha:string;
-  usuario?:PerfilUsuario;
-  url?:string;
-}
-
-// ============================================================
-// FORMULARIOS
-// ============================================================
-
-export interface OpcionSelect{
-  value:string;
-  label:string;
-}
-
-export interface ErrorFormulario{
-  campo:string;
-  mensaje:string;
-}
-
-// ============================================================
-// FILTROS
-// ============================================================
-
-export interface FiltroBusqueda{
-  texto?:string;
-  estado?:string;
-  area_id?:UUID;
-  departamento_id?:UUID;
-  fecha_inicio?:string;
-  fecha_fin?:string;
-}
-
-// ============================================================
-// CONFIGURACIÓN
-// ============================================================
-
-export interface ConfiguracionUsuario{
-  tema:"claro"|"oscuro"|"sistema";
-  idioma:string;
-  notificaciones:boolean;
-}
-
-// ============================================================
-// FUTURA IMPLEMENTACIÓN
-// (Preparado para múltiples perfiles)
-// ============================================================
-
-export interface PerfilAcceso{
-  id:UUID;
-  usuario_id:UUID;
-  rol:Rol;
-  area?:Area;
-  departamento?:Departamento;
-  cargo:string;
-  principal:boolean;
+export interface DashboardResumen {
+  documentosPendientes: number;
+  documentosFirmados: number;
+  eventosHoy: number;
+  notificaciones: number;
 }

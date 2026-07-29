@@ -3,50 +3,208 @@
 // Corporación Social Niños y Familia
 // ============================================================
 
-import { supabaseAdmin } from "../supabase-admin";
+import {
+  cookies,
+} from "next/headers";
+
+import {
+  createServerClient,
+  type CookieOptions,
+} from "@supabase/ssr";
+
+import type {
+  Session,
+  User,
+} from "@supabase/supabase-js";
+
+import type {
+  Usuario,
+  } from "@/types";
+
+  // ============================================================
+// CREAR CLIENTE SUPABASE (SERVIDOR)
+// ============================================================
+
+export async function crearClienteServidor() {
+
+  const cookieStore = await cookies();
+
+  return createServerClient(
+
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+
+    {
+
+      cookies: {
+
+        get(name: string) {
+
+          return cookieStore.get(name)?.value;
+
+        },
+
+        set(
+          name: string,
+          value: string,
+          options: CookieOptions
+        ) {
+
+          try {
+
+            cookieStore.set({
+              name,
+              value,
+              ...options,
+            });
+
+          } catch {
+
+            // Ignorado.
+            // En Server Components las cookies son de solo lectura.
+          }
+
+        },
+
+        remove(
+          name: string,
+          options: CookieOptions
+        ) {
+
+          try {
+
+            cookieStore.set({
+              name,
+              value: "",
+              ...options,
+              maxAge: 0,
+            });
+
+          } catch {
+
+            // Ignorado.
+          }
+
+        },
+
+      },
+
+    }
+
+  );
+
+}
+
+// ============================================================
+// OBTENER SESIÓN DEL SERVIDOR
+// ============================================================
+
+export async function obtenerSesionServidor(): Promise<Session | null> {
+
+  const supabase =
+    await crearClienteServidor();
+
+  const {
+
+    data: { session },
+
+    error,
+
+  } = await supabase.auth.getSession();
+
+  if (error) {
+
+    console.error(
+      "Error obteniendo sesión:",
+      error
+    );
+
+    return null;
+
+  }
+
+  return session;
+
+}
+
+// ============================================================
+// OBTENER USUARIO AUTH
+// ============================================================
+
+export async function obtenerUsuarioAuthServidor(): Promise<User | null> {
+
+  const supabase =
+    await crearClienteServidor();
+
+  const {
+
+    data: { user },
+
+    error,
+
+  } = await supabase.auth.getUser();
+
+  if (error) {
+
+    console.error(
+      "Error obteniendo usuario Auth:",
+      error
+    );
+
+    return null;
+
+  }
+
+  return user;
+
+}
 
 // ============================================================
 // OBTENER USUARIO DEL PORTAL
 // ============================================================
 
-export async function obtenerUsuarioPortal(
-  id:string
-){
+export async function obtenerUsuarioPortalServidor(): Promise<Usuario | null> {
 
-  try{
+  const authUser =
+    await obtenerUsuarioAuthServidor();
 
-    const{
+  if (!authUser) {
 
-      data,
+    return null;
 
-      error,
+  }
 
-    }=
-      await supabaseAdmin
+  const supabase =
+    await crearClienteServidor();
 
-        .from("usuarios")
+  // ==========================================================
+  // Usuario
+  // ==========================================================
 
-        .select("*")
+  const {
 
-        .eq("id",id)
+    data: usuario,
 
-        .single();
+    error: usuarioError,
 
-    if(error){
+  } = await supabase
 
-      return null;
+    .from("usuarios")
 
-    }
+    .select("*")
 
-    return data;
+    .eq("id", authUser.id)
 
-  }catch(error){
+    .single();
+
+  if (usuarioError || !usuario) {
 
     console.error(
 
-      "Error obteniendo usuario:",
+      "Usuario no encontrado:",
 
-      error
+      usuarioError
 
     );
 
@@ -54,72 +212,93 @@ export async function obtenerUsuarioPortal(
 
   }
 
+  // ==========================================================
+  // Perfil activo
+  // ==========================================================
+
+  const {
+
+    data: asignacion,
+
+  } = await supabase
+
+    .from("usuarios_asignaciones")
+
+    .select(`
+      *,
+      rol:roles(*),
+      cargo:cargos(
+        *,
+        departamento:departamentos(
+          *,
+          area:areas(*)
+        )
+      )
+    `)
+
+    .eq("usuario_id", usuario.id)
+
+    .eq("activo", true)
+
+    .eq("perfil_predeterminado", true)
+
+    .single();
+
+  // ==========================================================
+  // Construcción del objeto Usuario
+  // ==========================================================
+
+  return {
+
+    ...usuario,
+
+    email: authUser.email ?? "",
+
+    rol: asignacion?.rol,
+
+    cargo: asignacion?.cargo,
+
+    departamento:
+      asignacion?.cargo?.departamento,
+
+    area:
+      asignacion?.cargo?.departamento?.area,
+
+  } as Usuario;
+
 }
 
 // ============================================================
-// MARCAR CAMBIO DE CONTRASEÑA
+// USUARIO AUTENTICADO
 // ============================================================
 
-export async function marcarPasswordCambiada(
-  id:string
-){
+export async function usuarioAutenticado(): Promise<boolean> {
 
-  try{
+  const session =
+    await obtenerSesionServidor();
 
-    const{
+  return session !== null;
 
-      error,
+}
 
-    }=
-      await supabaseAdmin
+// ============================================================
+// CERRAR SESIÓN (SERVIDOR)
+// ============================================================
 
-        .from("usuarios")
+export async function cerrarSesionServidor(): Promise<void> {
 
-        .update({
+  const supabase =
+    await crearClienteServidor();
 
-          password_cambiada:true,
+  const { error } =
+    await supabase.auth.signOut();
 
-          updated_at:new Date().toISOString(),
-
-        })
-
-        .eq("id",id);
-
-    if(error){
-
-      return{
-
-        success:false,
-
-        error:error.message,
-
-      };
-
-    }
-
-    return{
-
-      success:true,
-
-    };
-
-  }catch(error){
+  if (error) {
 
     console.error(
-
-      "Error actualizando contraseña:",
-
+      "Error cerrando sesión:",
       error
-
     );
-
-    return{
-
-      success:false,
-
-      error:"No fue posible actualizar el usuario.",
-
-    };
 
   }
 

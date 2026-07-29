@@ -1,133 +1,57 @@
-'use client';
+import type { Usuario, PerfilActivo, UsuarioAsignacion } from "@/types";
 
-import { Usuario } from '@/types';
-
-interface InformacionLaboralProps {
-  usuario: Usuario | null;
+export interface InformacionOrganizacionalProps {
+  usuario?: Usuario | null;
+  perfilActivo?: PerfilActivo | null;
+  asignacion?: UsuarioAsignacion | null;
 }
 
-export default function InformacionLaboral({
+export default function InformacionOrganizacional({
   usuario,
-}: InformacionLaboralProps) {
-  if (!usuario) return null;
+  perfilActivo,
+  asignacion,
+}: InformacionOrganizacionalProps) {
+  // Extraer cargo, departamento y área del perfil activo o asignación
+  const cargo = perfilActivo?.cargo ?? asignacion?.cargo;
+  const rol = perfilActivo?.rol ?? asignacion?.rol;
+  const departamento = perfilActivo?.departamento ?? cargo?.departamento;
+  const area = perfilActivo?.area ?? departamento?.area;
 
   return (
-    <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-
-      <h2 className="text-lg font-bold text-gray-900 mb-6">
-        Información Laboral
+    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        Información Organizacional
       </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label
-            htmlFor="area"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Área
-          </label>
-
-          <input
-            id="area"
-            type="text"
-            value={usuario.area?.nombre ?? ''}
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
+          <label className="text-xs font-medium text-gray-500">Área</label>
+          <p className="text-sm font-medium text-gray-900">
+            {area?.nombre ?? "No asignada"}
+          </p>
         </div>
 
         <div>
-          <label
-            htmlFor="departamento"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Departamento
-          </label>
-
-          <input
-            id="departamento"
-            type="text"
-            value={usuario.departamento?.nombre ?? ''}
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
+          <label className="text-xs font-medium text-gray-500">Departamento</label>
+          <p className="text-sm font-medium text-gray-900">
+            {departamento?.nombre ?? "No asignado"}
+          </p>
         </div>
 
         <div>
-          <label
-            htmlFor="cargo"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Cargo
-          </label>
-
-          <input
-            id="cargo"
-            type="text"
-            value={usuario.cargo ?? ''}
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
+          <label className="text-xs font-medium text-gray-500">Cargo</label>
+          <p className="text-sm font-medium text-gray-900">
+            {cargo?.nombre ?? "No asignado"}
+          </p>
         </div>
 
         <div>
-          <label
-            htmlFor="contrato"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Tipo de contrato
-          </label>
-
-          <input
-            id="contrato"
-            type="text"
-            value={usuario.tipo_contrato ?? ''}
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
+          <label className="text-xs font-medium text-gray-500">Rol de Sistema</label>
+          <p className="text-sm font-medium text-gray-900">
+            {rol?.nombre ?? "Sin rol"}
+          </p>
         </div>
-
-        <div>
-          <label
-            htmlFor="fecha"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Fecha de vinculación
-          </label>
-
-          <input
-            id="fecha"
-            type="text"
-            value={usuario.fecha_vinculacion ?? ''}
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="jefe"
-            className="block text-sm font-medium text-gray-700 mb-2"
-          >
-            Jefe inmediato
-          </label>
-
-          <input
-            id="jefe"
-            type="text"
-            value={
-              usuario.jefe_directo
-                ? `${usuario.jefe_directo.nombres ?? ''} ${usuario.jefe_directo.apellidos ?? ''}`
-                : ''
-            }
-            readOnly
-            className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
-          />
-        </div>
-
       </div>
-
-    </section>
+    </div>
   );
 }

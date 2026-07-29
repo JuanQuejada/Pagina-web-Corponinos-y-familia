@@ -34,7 +34,7 @@ export default function SistemaCard() {
 
             <input
               disabled
-              value="1.0.0"
+              value="1.0.5"
               className="w-full rounded-xl border border-gray-300 bg-gray-100 p-3"
             />
 

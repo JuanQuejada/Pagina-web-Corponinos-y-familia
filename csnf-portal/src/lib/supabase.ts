@@ -4,7 +4,7 @@
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
-import { Database } from "./database";
+import { Database } from "@/lib/database/database.types";
 
 // ============================================================
 // VARIABLES DE ENTORNO

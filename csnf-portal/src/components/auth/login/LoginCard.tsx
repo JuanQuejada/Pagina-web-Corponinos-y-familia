@@ -1,102 +1,92 @@
 "use client";
 
+// ============================================================
+// LOGIN CARD
+// Portal Corporación Social Niños y Familia
+// ============================================================
+
 import Image from "next/image";
-import LoginForm from "./LoginForm";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/auth";
+
+import LoginForm from "./LoginForm";
+
+import { login } from "@/lib/auth/auth-client";
+import { useAuth } from "@/context/AuthContext";
 
 export default function LoginCard() {
 
-  //------------------------------------------------------
+  // ==========================================================
+  // Hooks
+  // ==========================================================
 
-const router = useRouter();
+  const router = useRouter();
 
-async function handleLogin(
-  email: string,
-  password: string
-) {
+  const {
+    actualizarSesion,
+  } = useAuth();
 
-  await new Promise(resolve =>
-    setTimeout(resolve, 800)
-  );
+  // ==========================================================
+  // LOGIN
+  // ==========================================================
 
-  if (
-    email === "admin@corponinos.org" &&
-    password === "123456"
-  ) {
+  async function handleLogin(
+    email: string,
+    password: string
+  ): Promise<void> {
 
-    const usuarioDemo = {
+    //----------------------------------------------------------
+    // Autenticar con Supabase
+    //----------------------------------------------------------
 
-      id: "1",
-      email,
-      tipo_persona: "juridica",
-      razon_social: "Departamento Sistemas",
-      nombres: null,
-      apellidos: null,
-      tipo_usuario: "Ejecutivo",
-      cargo: "Ingeniero de Sistemas",
-      foto_url: null,
-      perfil_completo: true,
-      tipo_documento:"NIT",
-      numero_documento:"123456789",
-      telefono: "3100001234",
-      direccion: "Cll 1 # 10 - 00",
+    const resultado =
+      await login(
+        email,
+        password
+      );
 
-      rol: {
-        nombre: "Super Administrador",
-        nivel: 1,
-      },
+    if (!resultado.success) {
 
-      area: {
-        nombre: "Dirección General",
-      },
+      throw new Error(
 
-      departamento: {
-        nombre: "Administración",
-      },
+        resultado.error ??
 
-      fecha: {
-        nombre: "05/01/2026",
-      },
+        "No fue posible iniciar sesión."
 
-    };
+      );
 
-    localStorage.setItem(
-      "token",
-      "demo-token"
-    );
+    }
 
-    localStorage.setItem(
-      "usuario",
-      JSON.stringify(usuarioDemo)
-    );
+    //----------------------------------------------------------
+    // Actualizar sesión del Portal
+    //----------------------------------------------------------
 
-    router.push("/dashboard");
+    await actualizarSesion();
 
-    return;
+    //----------------------------------------------------------
+    // Redireccionar
+    //----------------------------------------------------------
+
+    router.replace("/dashboard");
 
   }
 
-  throw new Error(
-    "Correo o contraseña incorrectos."
-  );
+  // ==========================================================
+  // COMPONENTE
+  // ==========================================================
 
-}
-  //------------------------------------------------------
-
-  return(
+  return (
 
     <div
       className="
-      w-full
-      max-w-md
-      rounded-3xl
-      border
-      border-white/40
-      bg-white/85
-      backdrop-blur-xl
-      shadow-2xl
-      p-8
+        w-full
+        max-w-md
+        rounded-3xl
+        border
+        border-white/40
+        bg-white/85
+        p-8
+        shadow-2xl
+        backdrop-blur-xl
       "
     >
 
@@ -118,11 +108,11 @@ async function handleLogin(
 
       <h1
         className="
-        mt-6
-        text-center
-        text-3xl
-        font-bold
-        text-slate-800
+          mt-6
+          text-center
+          text-3xl
+          font-bold
+          text-slate-800
         "
       >
 
@@ -132,15 +122,15 @@ async function handleLogin(
 
       <p
         className="
-        mt-2
-        text-center
-        text-xl
-        text-slate-500
+          mt-2
+          text-center
+          text-xl
+          text-slate-500
         "
       >
-        
+
         PORTAL CORPORATIVO
-        
+
       </p>
 
       {/* Formulario */}
@@ -155,13 +145,20 @@ async function handleLogin(
 
       {/* Footer */}
 
-      <div className="mt-8 border-t border-slate-200 pt-6">
+      <div
+        className="
+          mt-8
+          border-t
+          border-slate-200
+          pt-6
+        "
+      >
 
         <p
           className="
-          text-center
-          text-xs
-          text-slate-500
+            text-center
+            text-xs
+            text-slate-500
           "
         >
 
@@ -171,10 +168,10 @@ async function handleLogin(
 
         <p
           className="
-          mt-2
-          text-center
-          text-[11px]
-          text-slate-400
+            mt-2
+            text-center
+            text-[11px]
+            text-slate-400
           "
         >
 
