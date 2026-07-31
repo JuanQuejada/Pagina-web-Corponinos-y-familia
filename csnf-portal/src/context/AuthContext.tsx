@@ -27,7 +27,6 @@ interface AuthContextType {
   autenticado: boolean;
   actualizarSesion: () => Promise<void>;
   cerrarSesion: () => Promise<void>;
-  // 1. Agrega la propiedad aquí para que TypeScript la reconozca
   actualizarDatosUsuario: (nuevosDatos: Partial<UsuarioPortal>) => void; 
 }
 
@@ -65,16 +64,13 @@ export function AuthProvider({
   async function actualizarSesion() {
     setCargando(true);
 
-    const respuesta =
-      await obtenerSesionPortal();
+    const respuesta = await obtenerSesionPortal();
 
-    if (
-      respuesta.success &&
-      respuesta.data
-    ) {
-      setUsuarioPortal(
-        respuesta.data.usuario
-      );
+    if (respuesta.success && respuesta.data) {
+      // AQUÍ ESTABA EL DETALLE: Extraemos el usuario para que el resto de componentes 
+      // que leen 'usuarioPortal.nombres' no fallen, o guardamos un objeto unificado.
+      // Dependiendo de tu tipo `UsuarioPortal`, si este contiene tanto al usuario como asignaciones:
+      setUsuarioPortal(respuesta.data.usuario);
     } else {
       setUsuarioPortal(null);
     }
@@ -83,10 +79,9 @@ export function AuthProvider({
   }
 
   // ==========================================================
-  // ACTUALIZAR DATOS LOCALES DEL USUARIO (NUEVO)
+  // ACTUALIZAR DATOS LOCALES DEL USUARIO
   // ==========================================================
   
-  // 2. Implementa la función por si quieres refrescar o modificar datos en caliente
   function actualizarDatosUsuario(nuevosDatos: Partial<UsuarioPortal>) {
     setUsuarioPortal((prev) => {
       if (!prev) return null;
@@ -120,7 +115,6 @@ export function AuthProvider({
           usuarioPortal !== null,
         actualizarSesion,
         cerrarSesion,
-        // 3. Exponla en el value del Provider
         actualizarDatosUsuario, 
       }}
     >

@@ -201,11 +201,12 @@ export interface Usuario extends Omit<DBUsuario, 'email' | 'foto_url' | 'avatar_
   // Multimedia / Perfil
   //----------------------------------------------------------
   foto_url?: string | null;
+  nombreCompleto?: string;
 
   // Catálogos
-  tipoPersona?: TipoPersona;
-  tipoIdentificacion?: TipoIdentificacion;
-  estadoUsuario?: EstadoUsuario;
+  tipoPersona?: TipoPersona | null;
+  tipoIdentificacion?: TipoIdentificacion | null;
+  estadoUsuario?: EstadoUsuario | null;
 
   // Organización (Soporta objetos o strings para evitar incompatibilidades)
   rol?: Rol | any;

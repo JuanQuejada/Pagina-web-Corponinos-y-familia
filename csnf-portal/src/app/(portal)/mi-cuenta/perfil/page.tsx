@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Upload,
   Trash2,
@@ -19,107 +19,163 @@ export default function PerfilPage() {
   const [guardando, setGuardando] = useState(false);
   const [errorPeso, setErrorPeso] = useState<string | null>(null);
 
-  // Extraer objeto de usuario y la primera asignación activa del arreglo
-  const usuario = usuarioPortal?.usuario;
-  const listaAsignaciones = usuarioPortal?.asignaciones;
-  
-  // Tomamos la primera asignación si existe en el arreglo
+  // 1. Extraer correctamente el objeto usuario y asignaciones del contexto unificado
+  const usuario = (usuarioPortal as any)?.usuario ?? usuarioPortal;
+  const listaAsignaciones = (usuarioPortal as any)?.asignaciones ?? [];
   const asignacion = Array.isArray(listaAsignaciones) && listaAsignaciones.length > 0 
     ? listaAsignaciones[0] 
     : null;
 
-  // ---------------------------------------------------------------------------
-  // FORMATO Y LECTURA DE CAMPOS DESDE SUPABASE
-  // ---------------------------------------------------------------------------
+  // Estados locales para los nombres institucionales reales resueltos por base de datos
+  const [cargoMostrar, setCargoMostrar] = useState("Cargando cargo...");
+  const [departamentoMostrar, setDepartamentoMostrar] = useState("Cargando departamento...");
+  const [areaMostrar, setAreaMostrar] = useState("Cargando área...");
+  const [rolMostrar, setRolMostrar] = useState("Cargando rol...");
 
-  // 1. Tipo de Persona
-  const tipoPersonaObj = usuario?.tipo_persona_id;
-  const esPersonaNatural =
-    (typeof tipoPersonaObj === "object" && tipoPersonaObj !== null
-      ? (tipoPersonaObj as any)?.codigo
-      : tipoPersonaObj
-    )
-      ?.toString()
-      .toLowerCase() === "natural";
+  // Estados locales de datos personales
+  const [tipoPersonaMostrar, setTipoPersonaMostrar] = useState("Persona Natural");
+  const [tipoDocumentoMostrar, setTipoDocumentoMostrar] = useState("Cédula de Ciudadanía");
 
-  const tipoPersonaMostrar =
-    typeof tipoPersonaObj === "object" && tipoPersonaObj !== null
-      ? (tipoPersonaObj as any).nombre ?? (tipoPersonaObj as any).codigo
-      : (tipoPersonaObj ?? "Persona");
-
-  // 2. Tipo de Identificación
-  const tipoIdentificacionObj = usuario?.tipo_identificacion_id;
-  const tipoDocumentoMostrar =
-    typeof tipoIdentificacionObj === "object" && tipoIdentificacionObj !== null
-      ? (tipoIdentificacionObj as any).nombre ?? (tipoIdentificacionObj as any).codigo ?? (tipoIdentificacionObj as any).sigla
-      : (tipoIdentificacionObj ?? "Documento de Identidad");
-
-  // 3. Número de Identificación (Basado en la columna real 'numero_identificacion')
   const numeroDocumentoMostrar = usuario?.numero_identificacion ?? "No registrado";
-
-  // 4. Nombre / Razón Social (Basado en 'nombres', 'apellidos' y 'razon_social')
-  const nombreMostrar = usuario
-    ? esPersonaNatural
-      ? `${usuario.nombres ?? ""} ${usuario.apellidos ?? ""}`.trim()
-      : (usuario.razon_social ?? `${usuario.nombres ?? ""} ${usuario.apellidos ?? ""}`.trim() ?? "Sin nombre")
-    : "Sin usuario";
-
-  // 5. Información Institucional corregida para evitar errores de tipo ID vs Objeto
-  const cargoMostrar =
-    typeof asignacion?.cargo_id === "object" && asignacion?.cargo_id !== null
-      ? (asignacion.cargo_id as any).nombre
-      : (asignacion?.cargo_id ? `Cargo ID: ${asignacion.cargo_id}` : "No asignado");
-
-  const departamentoMostrar =
-    typeof asignacion?.cargo_id === "object" && (asignacion?.cargo_id as any)?.departamento !== null
-      ? (asignacion.cargo_id as any)?.departamento?.nombre
-      : "Departamento General";
-
-  const rolMostrar =
-    typeof asignacion?.rol_id === "object" && asignacion?.rol_id !== null
-      ? (asignacion.rol_id as any).nombre
-      : (asignacion?.rol_id ? `Rol ID: ${asignacion.rol_id}` : "Rol institucional");
+  const nombreMostrar = usuario?.nombreCompleto || usuario?.razon_social || "Sin nombre";
+   "Sin usuario";
 
   const fotoUrl = usuario?.foto_url;
 
-  // Estados locales para los campos editables de la tabla 'usuarios'
-  const [telefono, setTelefono] = useState(usuario?.telefono ?? "");
-  const [direccion, setDireccion] = useState(usuario?.direccion ?? "");
+  const [telefono, setTelefono] = useState("");
+  const [direccion, setDireccion] = useState("");
+
+  // Sincronizar inputs locales cuando cambie el usuario
+  useEffect(() => {
+    if (usuario) {
+      setTelefono(usuario.telefono ?? "");
+      setDireccion(usuario.direccion ?? "");
+    }
+  }, [usuario]);
 
   // ---------------------------------------------------------------------------
-  // MANEJADOR: CAMBIAR FOTOGRAFÍA (VALIDACIÓN ESTRICTA < 300 KB)
+  // EFECTO: RESOLVER NOMBRES DESDE LOS UUIDS PLANOS EN SUPABASE
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    async function resolverRelaciones() {
+      if (!usuario) return;
+
+      try {
+        // 1. Resolver Tipo de Persona si es un ID
+        const tipoPersonaId = usuario.tipo_persona_id;
+        if (tipoPersonaId) {
+          if (typeof tipoPersonaId === "object" && tipoPersonaId !== null) {
+            setTipoPersonaMostrar((tipoPersonaId as any).nombre ?? "Persona Natural");
+          } else {
+            // Consultar tabla si es un UUID
+            const { data } = await supabase.from("tipos_persona").select("nombre").eq("id", tipoPersonaId).single();
+            if (data?.nombre) setTipoPersonaMostrar(data.nombre);
+          }
+        }
+
+        // 2. Resolver Tipo de Identificación si es un ID
+        const tipoIdVal = usuario.tipo_identificacion_id;
+        if (tipoIdVal) {
+          if (typeof tipoIdVal === "object" && tipoIdVal !== null) {
+            setTipoDocumentoMostrar((tipoIdVal as any).nombre ?? (tipoIdVal as any).sigla ?? "Documento de Identidad");
+          } else {
+            const { data } = await supabase.from("tipos_identificacion").select("nombre").eq("id", tipoIdVal).single();
+            if (data?.nombre) setTipoDocumentoMostrar(data.nombre);
+          }
+        }
+
+        // 3. Resolver Información Institucional (Cargo, Departamento, Área, Rol)
+        if (asignacion) {
+          const cargoId = typeof asignacion.cargo_id === "object" && asignacion.cargo_id !== null 
+            ? (asignacion.cargo_id as any).id 
+            : asignacion.cargo_id;
+
+          if (cargoId) {
+            const { data: cargoData } = await supabase
+              .from("cargos")
+              .select(`
+                nombre,
+                departamento:departamentos (
+                  nombre,
+                  area:areas (
+                    nombre
+                  )
+                )
+              `)
+              .eq("id", cargoId)
+              .single();
+
+            if (cargoData) {
+              setCargoMostrar(cargoData.nombre ?? "Cargo Institucional");
+              const depto: any = cargoData.departamento;
+              if (depto) {
+                setDepartamentoMostrar(depto.nombre ?? "Departamento General");
+                const area: any = depto.area;
+                if (area) {
+                  setAreaMostrar(area.nombre ?? "Área Administrativa");
+                }
+              }
+            }
+          }
+
+          const rolId = typeof asignacion.rol_id === "object" && asignacion.rol_id !== null 
+            ? (asignacion.rol_id as any).id 
+            : asignacion.rol_id;
+
+          if (rolId) {
+            const { data: rolData } = await supabase
+              .from("roles")
+              .select("nombre")
+              .eq("id", rolId)
+              .single();
+
+            if (rolData?.nombre) {
+              setRolMostrar(rolData.nombre);
+            }
+          }
+        } else {
+          setCargoMostrar("Sin asignación");
+          setDepartamentoMostrar("Sin departamento");
+          setAreaMostrar("Sin área");
+          setRolMostrar("Sin rol");
+        }
+      } catch (err) {
+        console.error("Error resolviendo nombres relacionados:", err);
+      }
+    }
+
+    resolverRelaciones();
+  }, [usuario, asignacion]);
+
+  // ---------------------------------------------------------------------------
+  // MANEJADOR: CAMBIAR FOTOGRAFÍA
   // ---------------------------------------------------------------------------
   const manejarSubirFoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorPeso(null);
     const file = e.target.files?.[0];
     if (!file || !usuario?.id) return;
 
-    // Límite estricto de 300 KB (300 * 1024 bytes)
-    const MAX_SIZE_BYTES = 300 * 1024;
-
+    const MAX_SIZE_BYTES = 300 * 1024; // 300 KB
     if (file.size > MAX_SIZE_BYTES) {
       const pesoKB = (file.size / 1024).toFixed(1);
-      setErrorPeso(
-        `El archivo pesa ${pesoKB} KB. El tamaño máximo permitido es de 300 KB.`
-      );
+      setErrorPeso(`El archivo pesa ${pesoKB} KB. El tamaño máximo permitido es de 300 KB.`);
       e.target.value = "";
       return;
     }
 
     try {
       setSubiendo(true);
-
       const fileExt = file.name.split(".").pop();
       const fileName = `avatars/avatar_${usuario.id}_${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
-        .from("perfiles")
+        .from("avatars")
         .upload(fileName, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
       const { data: publicUrlData } = supabase.storage
-        .from("perfiles")
+        .from("avatars")
         .getPublicUrl(fileName);
 
       const nuevaFotoUrl = publicUrlData.publicUrl;
@@ -130,10 +186,7 @@ export default function PerfilPage() {
         .eq("id", usuario.id);
 
       if (updateError) throw updateError;
-
-      if (actualizarSesion) {
-        await actualizarSesion();
-      }
+      if (actualizarSesion) await actualizarSesion();
 
       alert("¡Fotografía de perfil actualizada con éxito!");
     } catch (err: any) {
@@ -152,17 +205,13 @@ export default function PerfilPage() {
 
     try {
       setSubiendo(true);
-
       const { error } = await supabase
         .from("usuarios")
         .update({ foto_url: null, updated_at: new Date().toISOString() })
         .eq("id", usuario.id);
 
       if (error) throw error;
-
-      if (actualizarSesion) {
-        await actualizarSesion();
-      }
+      if (actualizarSesion) await actualizarSesion();
 
       alert("Fotografía eliminada correctamente.");
     } catch (err: any) {
@@ -181,7 +230,6 @@ export default function PerfilPage() {
 
     try {
       setGuardando(true);
-
       const { error } = await supabase
         .from("usuarios")
         .update({
@@ -192,10 +240,7 @@ export default function PerfilPage() {
         .eq("id", usuario.id);
 
       if (error) throw error;
-
-      if (actualizarSesion) {
-        await actualizarSesion();
-      }
+      if (actualizarSesion) await actualizarSesion();
 
       alert("¡Perfil actualizado con éxito!");
     } catch (err: any) {
@@ -207,7 +252,6 @@ export default function PerfilPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 pb-12">
-      {/* ENCABEZADO */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
         <p className="text-sm text-gray-500">
@@ -215,10 +259,9 @@ export default function PerfilPage() {
         </p>
       </div>
 
-      {/* DISPOSICIÓN EN GRID DE 2 COLUMNAS */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         
-        {/* COLUMNA 1: TARJETA DE FOTOGRAFÍA Y ROL */}
+        {/* COLUMNA 1: FOTOGRAFÍA Y DATOS RÁPIDOS */}
         <div className="h-fit rounded-2xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col items-center text-center">
           <div className="relative mb-4 flex h-36 w-36 items-center justify-center overflow-hidden rounded-full border-4 border-white shadow-md bg-gradient-to-br from-emerald-600 to-teal-800">
             {fotoUrl ? (
@@ -239,15 +282,15 @@ export default function PerfilPage() {
           </h2>
 
           <p className="mt-1 text-sm font-medium text-slate-500">
-            {String(cargoMostrar)}
+            {cargoMostrar}
           </p>
 
           <div className="mt-3 flex flex-wrap justify-center gap-1.5">
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-              {String(departamentoMostrar)}
+              {departamentoMostrar}
             </span>
             <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-              {String(rolMostrar)}
+              {rolMostrar}
             </span>
           </div>
 
@@ -293,10 +336,9 @@ export default function PerfilPage() {
           </div>
         </div>
 
-        {/* COLUMNA 2 Y 3: FORMULARIOS DETALLADOS */}
+        {/* COLUMNA 2 Y 3: FORMULARIOS */}
         <div className="space-y-6 lg:col-span-2">
           
-          {/* SECCIÓN 1: INFORMACIÓN PERSONAL COMPLETA */}
           <form
             onSubmit={manejarGuardarPerfil}
             className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4"
@@ -309,37 +351,28 @@ export default function PerfilPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {/* TIPO DE PERSONA (NO EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Tipo de Persona
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Tipo de Persona</label>
                 <input
                   type="text"
                   disabled
-                  value={String(tipoPersonaMostrar)}
+                  value={tipoPersonaMostrar}
                   className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
                 />
               </div>
 
-              {/* TIPO DE IDENTIFICACIÓN (NO EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Tipo de Identificación
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Tipo de Identificación</label>
                 <input
                   type="text"
                   disabled
-                  value={String(tipoDocumentoMostrar)}
+                  value={tipoDocumentoMostrar}
                   className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
                 />
               </div>
 
-              {/* NÚMERO DE IDENTIFICACIÓN (NO EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Número de Identificación
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Número de Identificación</label>
                 <input
                   type="text"
                   disabled
@@ -348,11 +381,8 @@ export default function PerfilPage() {
                 />
               </div>
 
-              {/* NOMBRES Y APELLIDOS / RAZÓN SOCIAL (NO EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Nombres y Apellidos / Razón Social
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Nombres y Apellidos / Razón Social</label>
                 <input
                   type="text"
                   disabled
@@ -361,11 +391,8 @@ export default function PerfilPage() {
                 />
               </div>
 
-              {/* CORREO ELECTRÓNICO (NO EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Correo Electrónico
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Correo Electrónico</label>
                 <input
                   type="email"
                   disabled
@@ -374,11 +401,8 @@ export default function PerfilPage() {
                 />
               </div>
 
-              {/* TELÉFONO DE CONTACTO (EDITABLE) */}
               <div>
-                <label className="text-xs font-semibold text-gray-700">
-                  Teléfono de Contacto
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Teléfono de Contacto</label>
                 <input
                   type="text"
                   value={telefono}
@@ -388,11 +412,8 @@ export default function PerfilPage() {
                 />
               </div>
 
-              {/* DIRECCIÓN (EDITABLE) */}
               <div className="md:col-span-2">
-                <label className="text-xs font-semibold text-gray-700">
-                  Dirección
-                </label>
+                <label className="text-xs font-semibold text-gray-700">Dirección</label>
                 <input
                   type="text"
                   value={direccion}
@@ -415,7 +436,7 @@ export default function PerfilPage() {
             </div>
           </form>
 
-          {/* SECCIÓN 2: INFORMACIÓN INSTITUCIONAL */}
+          {/* INFORMACIÓN INSTITUCIONAL */}
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
             <div className="flex items-center gap-2 border-b border-gray-100 pb-3">
               <Building className="h-5 w-5 text-emerald-600" />
@@ -430,7 +451,7 @@ export default function PerfilPage() {
                 <input
                   type="text"
                   disabled
-                  value={String(cargoMostrar)}
+                  value={cargoMostrar}
                   className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
                 />
               </div>
@@ -440,7 +461,17 @@ export default function PerfilPage() {
                 <input
                   type="text"
                   disabled
-                  value={String(departamentoMostrar)}
+                  value={departamentoMostrar}
+                  className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Área</label>
+                <input
+                  type="text"
+                  disabled
+                  value={areaMostrar}
                   className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
                 />
               </div>
@@ -450,7 +481,7 @@ export default function PerfilPage() {
                 <input
                   type="text"
                   disabled
-                  value={String(rolMostrar)}
+                  value={rolMostrar}
                   className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600 cursor-not-allowed"
                 />
               </div>

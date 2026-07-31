@@ -20,11 +20,19 @@ import databaseRepository from "@/lib/database/repositories";
 // ============================================================
 
 function construirPerfilActivo(asignacion: UsuarioAsignacion): PerfilActivo {
-  // Garantizamos acceso a las relaciones anidadas
-  const cargo = asignacion?.cargo ?? null;
-  const rol = asignacion?.rol ?? null;
-  const departamento = (cargo as any)?.departamento ?? null;
-  const area = (departamento as any)?.area ?? null;
+  // Garantizamos acceso seguro a las relaciones anidadas y manejamos alias de Supabase
+  const cargo = asignacion?.cargo ?? (asignacion as any)?.cargos ?? null;
+  const rol = asignacion?.rol ?? (asignacion as any)?.roles ?? null;
+  
+  const departamento = 
+    cargo?.departamento ?? 
+    (cargo as any)?.departamentos ?? 
+    null;
+
+  const area = 
+    departamento?.area ?? 
+    (departamento as any)?.areas ?? 
+    null;
 
   return {
     asignacion,
@@ -43,9 +51,9 @@ function construirUsuarioPortal(
   usuarioBase: Usuario,
   asignaciones: UsuarioAsignacion[]
 ): UsuarioPortal {
-  // 1. Buscar perfil predeterminado o tomar la primera asignación
+  // 1. Buscar perfil predeterminado o tomar la primera asignación activa/disponible
   const asignacionPrincipal =
-    asignaciones.find((a) => a.perfil_predeterminado) ??
+    asignaciones.find((a: any) => a.perfil_predeterminado || a.predeterminado) ??
     asignaciones[0] ??
     null;
 
@@ -63,7 +71,7 @@ function construirUsuarioPortal(
     area: perfilActivo?.area,
   };
 
-  // 4. Retornar la estructura final de UsuarioPortal
+  // 4. Retornar la estructura final de UsuarioPortal asegurando compatibilidad con vistas
   return {
     usuario,
     asignaciones,
@@ -103,19 +111,36 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
     return null;
   }
 
+  const rawUser = resultado.data.usuario;
+
   //----------------------------------------------------------
-  // 3. Mapear Usuario e Información de Catálogos
+  // 3. Mapear Usuario e Información de Catálogos de Forma Robusta
   //----------------------------------------------------------
+  
+  // Extraemos de forma segura los catálogos ya resueltos en el objeto del repositorio
+  const tipoPersona = rawUser.tipoPersona ?? (rawUser as any).tipos_persona ?? null;
+  const tipoIdentificacion = rawUser.tipoIdentificacion ?? (rawUser as any).tipos_identificacion ?? null;
+  const estadoUsuario = rawUser.estadoUsuario ?? (rawUser as any).estados_usuario ?? null;
+
+  // Determinamos el nombre para mostrar según si es persona natural o jurídica
+  const tipoPersonaCodigo = tipoPersona?.codigo?.toUpperCase() ?? "";
+  const esJuridica = tipoPersonaCodigo === "JUR";
+
+  const nombreMostrado = esJuridica
+    ? (rawUser.razon_social || "Sin razón social")
+    : `${rawUser.nombres ?? ""} ${rawUser.apellidos ?? ""}`.trim() || "Sin nombre";
+
   const usuarioBase: Usuario = {
-    ...resultado.data.usuario,
-    email: auth.data.email ?? "",
-    tipoPersona: resultado.data.usuario.tipoPersona,
-    tipoIdentificacion: resultado.data.usuario.tipoIdentificacion,
-    estadoUsuario: resultado.data.usuario.estadoUsuario,
+    ...rawUser,
+    email: rawUser.email ?? auth.data.email ?? "",
+    nombreCompleto: nombreMostrado,
+    tipoPersona: tipoPersona ?? undefined,
+    tipoIdentificacion: tipoIdentificacion ?? undefined,
+    estadoUsuario: estadoUsuario ?? undefined,
   };
 
   // Extraer asignaciones (si viene una sola la convertimos en array)
-  const asignacionesRaw = resultado.data.asignacion;
+  const asignacionesRaw = resultado.data.asignaciones;
   const asignaciones: UsuarioAsignacion[] = asignacionesRaw
     ? Array.isArray(asignacionesRaw)
       ? asignacionesRaw
@@ -126,8 +151,6 @@ export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
   // 4. Construir y retornar UsuarioPortal centralizado
   //----------------------------------------------------------
   const usuarioPortal = construirUsuarioPortal(usuarioBase, asignaciones);
-
-  console.log("Usuario Portal Generado:", usuarioPortal);
 
   return usuarioPortal;
 }

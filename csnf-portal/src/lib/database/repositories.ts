@@ -1,6 +1,7 @@
 // ============================================================
-// DATABASE REPOSITORIES
+// DATABASE REPOSITORY
 // Portal Corporación Social Niños y Familia
+// Versión 1.0.6
 // ============================================================
 
 import { supabase } from "@/lib/supabase";
@@ -11,8 +12,20 @@ import type {
   Update,
 } from "@/lib/database";
 
+import type {
+  Usuario,
+  UsuarioAsignacion,
+  TipoPersona,
+  TipoIdentificacion,
+  EstadoUsuario,
+  Cargo,
+  Departamento,
+  Area,
+  Rol,
+} from "@/types";
+
 // ============================================================
-// ALIAS
+// ALIAS BASE DE DATOS
 // ============================================================
 
 export type UsuarioDB = Row<"usuarios">;
@@ -20,34 +33,23 @@ export type UsuarioInsert = Insert<"usuarios">;
 export type UsuarioUpdate = Update<"usuarios">;
 
 export type AsignacionDB = Row<"usuarios_asignaciones">;
+
 export type CargoDB = Row<"cargos">;
 export type DepartamentoDB = Row<"departamentos">;
 export type AreaDB = Row<"areas">;
 export type RolDB = Row<"roles">;
 
 // ============================================================
-// INTERFACES
+// ESTRUCTURA INTERNA
 // ============================================================
-
-interface UsuarioPortalDB extends Omit<UsuarioDB, 'email' | 'foto_url'> {
-
-  email?: string | null;
-  tipoPersona?: any;
-  foto_url?: string | null;
-  tipoIdentificacion?: any;
-  estadoUsuario?: any;
-
-}
 
 interface ResultadoUsuarioPortal {
-
-  usuario: UsuarioPortalDB;
-  asignacion: any;
-
+  usuario: Usuario;
+  asignaciones: UsuarioAsignacion[];
 }
 
 // ============================================================
-// REPOSITORIO
+// REPOSITORY
 // ============================================================
 
 export const databaseRepository = {
@@ -85,103 +87,49 @@ export const databaseRepository = {
   },
 
   async existeUsuario(usuarioId: string) {
-
-    const { data } =
-      await supabase
-        .from("usuarios")
-        .select("id")
-        .eq("id", usuarioId)
-        .maybeSingle();
+    const { data } = await supabase
+      .from("usuarios")
+      .select("id")
+      .eq("id", usuarioId)
+      .maybeSingle();
 
     return data !== null;
-
   },
 
   // ==========================================================
-  // CATÁLOGOS DEL USUARIO
+  // FUNCIONES AUXILIARES PRIVADAS (INTERNAS)
   // ==========================================================
 
-  async obtenerTipoPersonaPorId(id: string) {
-
-    const response = await supabase
+  async _obtenerTipoPersona(id: string | null): Promise<TipoPersona | null> {
+    if (!id) return null;
+    const { data } = await supabase
       .from("tipos_persona")
       .select("*")
       .eq("id", id)
       .maybeSingle();
-  
-      console.log(
-        "Respuesta Tipo Persona:",
-        JSON.stringify(response, null, 2)
-      );
-  
-    return response;
-  
+    return data as TipoPersona | null;
   },
 
-  async obtenerTipoIdentificacionPorId(id: string) {
-
-    console.log("Buscando Tipo Identificación:", id);
-  
-    const response = await supabase
+  async _obtenerTipoIdentificacion(id: string | null): Promise<TipoIdentificacion | null> {
+    if (!id) return null;
+    const { data } = await supabase
       .from("tipos_identificacion")
       .select("*")
       .eq("id", id)
       .maybeSingle();
-  
-      console.log(
-        "Respuesta Tipo Identificación:",
-        JSON.stringify(response, null, 2)
-      );
-  
-    return response;
-  
+    return data as TipoIdentificacion | null;
   },
 
-  async obtenerEstadoUsuarioPorId(id: string) {
-
-    console.log("Buscando Estado Usuario:", id);
-  
-    const response = await supabase
+  async _obtenerEstadoUsuario(id: string | null): Promise<EstadoUsuario | null> {
+    if (!id) return null;
+    const { data } = await supabase
       .from("estados_usuario")
       .select("*")
       .eq("id", id)
       .maybeSingle();
-  
-      console.log(
-        "Respuesta Estado Usuario:",
-        JSON.stringify(response, null, 2)
-      );
-  
-    return response;
-  
+    return data as EstadoUsuario | null;
   },
 
-  // ==========================================================
-  // PERFIL ACTIVO
-  // ==========================================================
-  
-  async obtenerPerfilPredeterminado(usuarioId: string) {
-    const response = await supabase
-      .from("usuarios_asignaciones")
-      .select(`
-        *,
-        rol:roles(*),
-        cargo:cargos(
-          *,
-          departamento:departamentos(
-            *,
-            area:areas(*)
-          )
-        )
-      `)
-      .eq("usuario_id", usuarioId)
-      .eq("perfil_predeterminado", true)
-      .eq("activo", true)
-      .maybeSingle();
-  
-    return response;
-  },
-  
   // ==========================================================
   // USUARIO PORTAL
   // ==========================================================
@@ -192,121 +140,70 @@ export const databaseRepository = {
     data: ResultadoUsuarioPortal | null;
     error: Error | null;
   }> {
+    //---------------------------------------------------------
+    // 1. Buscar usuario por auth_user_id
+    //---------------------------------------------------------
+    const usuarioResponse = await this.obtenerUsuarioPorAuthId(authUserId);
 
-    //--------------------------------------------------------
-    // Usuario
-    //--------------------------------------------------------
-
-    const usuarioResponse =
-      await this.obtenerUsuarioPorAuthId(authUserId);
-
-    if (
-      usuarioResponse.error ||
-      !usuarioResponse.data
-    ) {
-
+    if (usuarioResponse.error || !usuarioResponse.data) {
       return {
-
         data: null,
-
-        error:
-          usuarioResponse.error ??
-          new Error("Usuario no encontrado"),
-
+        error: usuarioResponse.error ?? new Error("Usuario no encontrado en la base de datos"),
       };
-
     }
 
-    const usuario =
-      usuarioResponse.data;
+    const usuarioDB = usuarioResponse.data;
 
-    //--------------------------------------------------------
-    // Catálogos
-    //--------------------------------------------------------
-
+    //---------------------------------------------------------
+    // 2. Cargar catálogos y asignaciones en paralelo de forma segura
+    //---------------------------------------------------------
     const [
-      tipoPersonaResponse,
-      tipoIdentificacionResponse,
-      estadoUsuarioResponse,
-      perfilActivoResponse,
+      tipoPersona,
+      tipoIdentificacion,
+      estadoUsuario,
+      asignacionesResponse
     ] = await Promise.all([
-    
-      usuario.tipo_persona_id
-        ? this.obtenerTipoPersonaPorId(usuario.tipo_persona_id)
-        : Promise.resolve({ data: null }),
-    
-      usuario.tipo_identificacion_id
-        ? this.obtenerTipoIdentificacionPorId(
-            usuario.tipo_identificacion_id
-          )
-        : Promise.resolve({ data: null }),
-    
-      usuario.estado_usuario_id
-        ? this.obtenerEstadoUsuarioPorId(
-            usuario.estado_usuario_id
-          )
-        : Promise.resolve({ data: null }),
-    
-      this.obtenerPerfilPredeterminado(usuario.id),
-    
+      this._obtenerTipoPersona(usuarioDB.tipo_persona_id),
+      this._obtenerTipoIdentificacion(usuarioDB.tipo_identificacion_id),
+      this._obtenerEstadoUsuario(usuarioDB.estado_usuario_id),
+      this.obtenerAsignacionesUsuario(usuarioDB.id)
     ]);
-    
-    console.log(
-      "Tipo Persona:",
-      JSON.stringify(tipoPersonaResponse, null, 2)
-    );
-    console.log(
-      "Tipo Identificación:",
-      JSON.stringify(tipoIdentificacionResponse, null, 2)
-    );
-    console.log(
-      "Estado Usuario:",
-      JSON.stringify(estadoUsuarioResponse, null, 2)
-    );
-    console.log(
-      "Perfil Activo:",
-      JSON.stringify(perfilActivoResponse, null, 2)
-    );
-    
-    return {
 
-      data: {
-    
-        usuario: {
-    
-          ...usuario,
+    // Extraer datos de asignaciones (manejando si viene envuelto en objeto de supabase o array directo)
+    const asignaciones: UsuarioAsignacion[] = Array.isArray(asignacionesResponse) 
+      ? (asignacionesResponse as unknown as UsuarioAsignacion[]) 
+      : ((asignacionesResponse as any)?.data ?? []);
 
-          foto_url: (usuario as any).foto_url ?? null,
-    
-          tipoPersona:
-            tipoPersonaResponse.data ?? null,
-    
-          tipoIdentificacion:
-            tipoIdentificacionResponse.data ?? null,
-    
-          estadoUsuario:
-            estadoUsuarioResponse.data ?? null,
-    
-        },
-    
-        asignacion:
-          perfilActivoResponse.data ?? null,
-    
-      },
-    
-      error: null,
-    
+    //---------------------------------------------------------
+    // 3. Construir Usuario con sus relaciones mapeadas
+    //---------------------------------------------------------
+    const usuario: Usuario = {
+      ...usuarioDB,
+      tipoPersona: tipoPersona ?? undefined,
+      tipoIdentificacion: tipoIdentificacion ?? undefined,
+      estadoUsuario: estadoUsuario ?? undefined,
+      foto_url: usuarioDB.foto_url,
+      email: usuarioDB.email ?? undefined,
     };
 
+    //---------------------------------------------------------
+    // 4. Retornar información completa
+    //---------------------------------------------------------
+    return {
+      data: {
+        usuario,
+        asignaciones,
+      },
+      error: null,
+    };
   },
 
-    // ==========================================================
-  // ASIGNACIONES DE USUARIO
+  // ==========================================================
+  // ASIGNACIONES
   // ==========================================================
 
   async obtenerAsignacionesUsuario(usuarioId: string) {
-
-    return await supabase
+    const { data, error } = await supabase
       .from("usuarios_asignaciones")
       .select(`
         *,
@@ -325,10 +222,15 @@ export const databaseRepository = {
         ascending: false,
       });
 
+    if (error) {
+      console.error("Error obteniendo asignaciones:", error);
+      return [];
+    }
+
+    return (data ?? []) as unknown as UsuarioAsignacion[];
   },
 
   async obtenerAsignacion(asignacionId: string) {
-
     return await supabase
       .from("usuarios_asignaciones")
       .select(`
@@ -344,30 +246,6 @@ export const databaseRepository = {
       `)
       .eq("id", asignacionId)
       .maybeSingle();
-
-  },
-
-  async actualizarPerfilPredeterminado(
-    usuarioId: string,
-    asignacionId: string
-  ) {
-
-    await supabase
-      .from("usuarios_asignaciones")
-      .update({
-        perfil_predeterminado: false,
-      })
-      .eq("usuario_id", usuarioId);
-
-    return await supabase
-      .from("usuarios_asignaciones")
-      .update({
-        perfil_predeterminado: true,
-      })
-      .eq("id", asignacionId)
-      .select()
-      .single();
-
   },
 
   // ==========================================================
@@ -375,23 +253,18 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerAreas() {
-
     return await supabase
       .from("areas")
       .select("*")
-      .eq("activo", true)
       .order("orden");
-
   },
 
   async obtenerAreaPorId(areaId: string) {
-
     return await supabase
       .from("areas")
       .select("*")
       .eq("id", areaId)
       .maybeSingle();
-
   },
 
   // ==========================================================
@@ -399,20 +272,16 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerDepartamentos() {
-
     return await supabase
       .from("departamentos")
       .select(`
         *,
         area:areas(*)
       `)
-      .eq("activo", true)
       .order("orden");
-
   },
 
   async obtenerDepartamentosPorArea(areaId: string) {
-
     return await supabase
       .from("departamentos")
       .select(`
@@ -420,15 +289,10 @@ export const databaseRepository = {
         area:areas(*)
       `)
       .eq("area_id", areaId)
-      .eq("activo", true)
       .order("orden");
-
   },
 
-  async obtenerDepartamentoPorId(
-    departamentoId: string
-  ) {
-
+  async obtenerDepartamentoPorId(departamentoId: string) {
     return await supabase
       .from("departamentos")
       .select(`
@@ -437,7 +301,6 @@ export const databaseRepository = {
       `)
       .eq("id", departamentoId)
       .maybeSingle();
-
   },
 
   // ==========================================================
@@ -445,7 +308,6 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerCargos() {
-
     return await supabase
       .from("cargos")
       .select(`
@@ -455,13 +317,10 @@ export const databaseRepository = {
           area:areas(*)
         )
       `)
-      .eq("activo", true)
       .order("orden");
-
   },
 
   async obtenerCargoPorId(cargoId: string) {
-
     return await supabase
       .from("cargos")
       .select(`
@@ -473,13 +332,9 @@ export const databaseRepository = {
       `)
       .eq("id", cargoId)
       .maybeSingle();
-
   },
 
-  async obtenerCargosPorDepartamento(
-    departamentoId: string
-  ) {
-
+  async obtenerCargosPorDepartamento(departamentoId: string) {
     return await supabase
       .from("cargos")
       .select(`
@@ -490,9 +345,7 @@ export const databaseRepository = {
         )
       `)
       .eq("departamento_id", departamentoId)
-      .eq("activo", true)
       .order("orden");
-
   },
 
   // ==========================================================
@@ -500,22 +353,18 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerRoles() {
-
     return await supabase
       .from("roles")
       .select("*")
       .order("nivel");
-
   },
 
   async obtenerRolPorId(rolId: string) {
-
     return await supabase
       .from("roles")
       .select("*")
       .eq("id", rolId)
       .maybeSingle();
-
   },
 
   // ==========================================================
@@ -523,13 +372,18 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerModulos() {
-
     return await supabase
       .from("modulos")
       .select("*")
-      .eq("activo", true)
       .order("orden");
+  },
 
+  async obtenerModuloPorId(moduloId: string) {
+    return await supabase
+      .from("modulos")
+      .select("*")
+      .eq("id", moduloId)
+      .maybeSingle();
   },
 
   // ==========================================================
@@ -537,21 +391,16 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerPermisos() {
-
     return await supabase
       .from("permisos")
       .select(`
         *,
         modulo:modulos(*)
       `)
-      .eq("activo", true);
-
+      .order("orden");
   },
 
-  async obtenerPermisosModulo(
-    moduloId: string
-  ) {
-
+  async obtenerPermisosModulo(moduloId: string) {
     return await supabase
       .from("permisos")
       .select(`
@@ -559,8 +408,7 @@ export const databaseRepository = {
         modulo:modulos(*)
       `)
       .eq("modulo_id", moduloId)
-      .eq("activo", true);
-
+      .order("orden");
   },
 
   // ==========================================================
@@ -568,93 +416,66 @@ export const databaseRepository = {
   // ==========================================================
 
   async obtenerTiposPersona() {
-
     return await supabase
       .from("tipos_persona")
       .select("*")
-      .eq("activo", true)
       .order("orden");
-
   },
 
   async obtenerTiposIdentificacion() {
-
     return await supabase
       .from("tipos_identificacion")
       .select(`
         *,
         tipo_persona:tipos_persona(*)
       `)
-      .eq("activo", true)
       .order("orden");
-
   },
 
-  async obtenerTiposIdentificacionPorPersona(
-    tipoPersonaId: string
-  ) {
-
+  async obtenerTiposIdentificacionPorPersona(tipoPersonaId: string) {
     return await supabase
       .from("tipos_identificacion")
       .select("*")
       .eq("tipo_persona_id", tipoPersonaId)
-      .eq("activo", true)
       .order("orden");
-
   },
 
   async obtenerEstadosUsuario() {
-
     return await supabase
       .from("estados_usuario")
       .select("*")
-      .eq("activo", true)
       .order("orden");
-
   },
 
-    // ==========================================================
+  // ==========================================================
   // CONFIGURACIÓN GENERAL
   // ==========================================================
 
   async obtenerConfiguracionGeneral() {
-
     return await supabase
       .from("configuracion_general")
       .select("*")
       .maybeSingle();
-
   },
 
-  async actualizarConfiguracionGeneral(
-    datos: Update<"configuracion_general">
-  ) {
-
+  async actualizarConfiguracionGeneral(datos: Update<"configuracion_general">) {
     return await supabase
       .from("configuracion_general")
       .update(datos)
-      .neq(
-        "id",
-        "00000000-0000-0000-0000-000000000000"
-      )
+      .neq("id", "00000000-0000-0000-0000-000000000000")
       .select()
       .single();
-
   },
 
   // ==========================================================
   // AUDITORÍA
   // ==========================================================
 
-  async registrarAuditoria(
-    datos: Insert<"auditoria">
-  ) {
-
+  async registrarAuditoria(datos: Insert<"auditoria">) {
     return await supabase
       .from("auditoria")
       .insert(datos);
-
-  },
+  }
 
 };
 

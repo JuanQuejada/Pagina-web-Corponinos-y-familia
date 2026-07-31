@@ -52,7 +52,7 @@ interface Usuario {
   activo?: boolean | null;
   cargos?: {
     id: string;
-    nombre: string;
+    nombre: string | null;
     departamentos?: {
       id: string;
       nombre: string;
