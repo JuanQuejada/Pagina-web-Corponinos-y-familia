@@ -204,13 +204,15 @@ export default function ConfiguracionPage() {
     }
   };
 
+  // Enlace del manual de usuario configurado solo para visualización
   const abrirManualUsuario = () => {
     window.open(
-      "https://docs.google.com/document/d/1hul8EiuWmMJpuA7RAF3PgRoHK5cbjZyuGCnlI5anfLk/edit?usp=drive_link",
+      "https://docs.google.com/document/d/1hul8EiuWmMJpuA7RAF3PgRoHK5cbjZyuGCnlI5anfLk/edit?rm=minimal&embedded=true",
       "_blank"
     );
   };
 
+  // Redirección directa al número de WhatsApp de soporte técnico
   const abrirWhatsappSoporte = () => {
     const telefono = "573024024384";
     const mensaje = encodeURIComponent(
@@ -219,23 +221,62 @@ export default function ConfiguracionPage() {
     window.open(`https://wa.me/${telefono}?text=${mensaje}`, "_blank");
   };
 
+  // Envío del reporte de fallas dirigido al Administrador con copia al Superadministrador
   const manejarEnviarReporte = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnviandoReporte(true);
 
     try {
+      // 1. Consultar las asignaciones activas conectando usuarios y roles
+      const { data: asignaciones, error: errorAsignaciones } = await supabase
+        .from("usuarios_asignaciones")
+        .select(`
+          activo,
+          usuarios:usuario_id ( email ),
+          roles:rol_id ( codigo, nombre )
+        `)
+        .eq("activo", true);
+
+      if (errorAsignaciones) throw errorAsignaciones;
+
+      let correoAdmin = "";
+      let correoSuperAdmin = "";
+
+      // 2. Filtrar los correos según el código o nombre del rol en la tabla roles
+      asignaciones?.forEach((item: any) => {
+        const codigoRol = (item.roles?.codigo || "").toUpperCase();
+        const nombreRol = (item.roles?.nombre || "").toUpperCase();
+        const emailUsuario = item.usuarios?.email;
+
+        if (emailUsuario) {
+          if (codigoRol.includes("SUPER") || nombreRol.includes("SUPER")) {
+            correoSuperAdmin = emailUsuario;
+          } else if (codigoRol.includes("ADMIN") || nombreRol.includes("ADMIN")) {
+            correoAdmin = emailUsuario;
+          }
+        }
+      });
+
+      // Valores por defecto (fallback) por seguridad
+      if (!correoAdmin) correoAdmin = "admin@csnf.org";
+      if (!correoSuperAdmin) correoSuperAdmin = "superadmin@csnf.org";
+
+      // 3. Registrar el evento en la tabla de auditoría
       await supabase.from("auditoria").insert({
         usuario_id: usuario?.id,
         accion: "REPORTE_PROBLEMA",
         detalles: JSON.stringify({
           asunto: reporteAsunto,
           descripcion: reporteDescripcion,
+          enviado_a: correoAdmin,
+          con_copia_a: correoSuperAdmin,
         }),
       });
 
       alert(
-        "Su reporte ha sido enviado con éxito al Administrador del portal y al Superadministrador."
+        `¡Reporte enviado con éxito!\n\n• Destinatario (Administrador): ${correoAdmin}\n• Copia (Superadministrador): ${correoSuperAdmin}`
       );
+      
       setModalReporte(false);
       setReporteAsunto("");
       setReporteDescripcion("");
@@ -599,7 +640,7 @@ export default function ConfiguracionPage() {
                 Manual de Usuario
               </p>
               <p className="text-xs text-gray-500 dark:text-slate-400">
-                Consulte la guía oficial para aprender a utilizar el portal.
+                Consulte la guía oficial para aprender a utilizar el portal (Solo visualización).
               </p>
             </div>
             <button
@@ -635,7 +676,7 @@ export default function ConfiguracionPage() {
                 Contactar Soporte
               </p>
               <p className="text-xs text-gray-500 dark:text-slate-400">
-                Comuníquese directamente vía WhatsApp.
+                Tel: 302 402 4384 (Vía WhatsApp).
               </p>
             </div>
             <button
@@ -656,8 +697,7 @@ export default function ConfiguracionPage() {
               Reportar un Problema
             </h3>
             <p className="mb-4 text-xs text-gray-500 dark:text-slate-400">
-              Este reporte se enviará por correo al administrador del portal y
-              al superadministrador para su seguimiento.
+              Este reporte se enviará por correo al administrador del portal (con copia al superadministrador) para su seguimiento.
             </p>
 
             <form onSubmit={manejarEnviarReporte} className="space-y-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   Building2,
@@ -16,55 +16,144 @@ import {
   CheckCircle2,
   AlertCircle,
   Hash,
-  Mail,
-  UserCheck,
   ListOrdered,
+  Save,
+  Power,
+  Layers3,
 } from "lucide-react";
-import { DepartamentoDB } from "@/lib/database/repositories";
 
 interface Area {
   id: string;
-  codigo?: string | null;
+  codigo: string | null;
   nombre: string;
-  descripcion?: string | null;
-  orden?: number | null;
+  descripcion: string | null;
+  orden: number | null;
   activo: boolean | null;
+  editable: boolean;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface Departamento {
   id: string;
   area_id: string;
-  codigo?: string | null;
+  codigo: string | null;
   nombre: string;
-  descripcion?: string | null;
-  responsable_nombre?: string | null;
-  email_contacto?: string | null;
-  orden?: number | null;
+  descripcion: string | null;
   activo: boolean | null;
   editable: boolean;
-  area?: {id: string;
-          nombre: string;
+  orden: number | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  area?: {
+    id: string;
+    codigo?: string | null;
+    nombre: string;
+    activo?: boolean | null;
+  } | null;
+}
+
+type TabActiva = "areas" | "departamentos";
+
+type TipoMensaje = "exito" | "error";
+
+interface Mensaje {
+  tipo: TipoMensaje;
+  texto: string;
+}
+
+/**
+ * Lee respuestas de las API de organización de forma segura.
+ * Evita que una respuesta HTML (por ejemplo, un 404/405 del framework)
+ * produzca el error genérico: Unexpected token '<' ... is not valid JSON.
+ */
+async function leerRespuestaJson(response: Response) {
+  const texto = await response.text();
+
+  if (!texto.trim()) {
+    return {
+      ok: false,
+      error: `El servidor respondió sin contenido (HTTP ${response.status}).`,
+    };
+  }
+
+  try {
+    return JSON.parse(texto);
+  } catch {
+    console.error("Respuesta no JSON de la API:", texto.slice(0, 500));
+    return {
+      ok: false,
+      error: `La API respondió con un formato inesperado (HTTP ${response.status}).`,
+    };
+  }
+}
+
+/**
+ * Obtiene los encabezados de autenticación de la sesión actual.
+ * Las operaciones protegidas de organización requieren el JWT
+ * de Supabase en Authorization: Bearer <access_token>.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    console.error("Error obteniendo sesión:", error);
+    return {};
+  }
+
+  const token = data.session?.access_token;
+
+  if (!token) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
   };
-  
 }
 
 export default function AreasDepartamentosPage() {
-  const [tabActiva, setTabActiva] = useState<"areas" | "departamentos">("areas");
+  // =========================================================
+  // ESTADO GENERAL
+  // =========================================================
+
+  const [tabActiva, setTabActiva] =
+    useState<TabActiva>("areas");
 
   const [areas, setAreas] = useState<Area[]>([]);
   const [departamentos, setDepartamentos] = useState<Departamento[]>([]);
+
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
+  const [cambiandoEstado, setCambiandoEstado] = useState<string | null>(
+    null
+  );
+
   const [busqueda, setBusqueda] = useState("");
 
-  // Modales
+  const [mensaje, setMensaje] = useState<Mensaje | null>(null);
+
+  // =========================================================
+  // MODALES
+  // =========================================================
+
   const [modalAreaOpen, setModalAreaOpen] = useState(false);
   const [modalDeptoOpen, setModalDeptoOpen] = useState(false);
+
   const [areaEditando, setAreaEditando] = useState<Area | null>(null);
-  const [deptoEditando, setDeptoEditando] = useState<Departamento | null>(null);
+  const [deptoEditando, setDeptoEditando] =
+    useState<Departamento | null>(null);
+
   const [modoLectura, setModoLectura] = useState(false);
 
-  // Formulario Área
+  // =========================================================
+  // FORMULARIO ÁREA
+  // =========================================================
+
   const [formArea, setFormArea] = useState({
     codigo: "",
     nombre: "",
@@ -73,62 +162,184 @@ export default function AreasDepartamentosPage() {
     activo: true,
   });
 
-  // Formulario Departamento
+  // =========================================================
+  // FORMULARIO DEPARTAMENTO
+  // =========================================================
+
   const [formDepto, setFormDepto] = useState({
     area_id: "",
     codigo: "",
     nombre: "",
     descripcion: "",
-    responsable_nombre: "",
-    email_contacto: "",
     orden: 1,
     activo: true,
   });
 
-  const [mensaje, setMensaje] = useState<{ tipo: "exito" | "error"; texto: string } | null>(null);
+  // =========================================================
+  // MENSAJES
+  // =========================================================
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
+  const mostrarMensaje = (
+    tipo: TipoMensaje,
+    texto: string
+  ) => {
+    setMensaje({
+      tipo,
+      texto,
+    });
 
-  const mostrarMensaje = (tipo: "exito" | "error", texto: string) => {
-    setMensaje({ tipo, texto });
-    setTimeout(() => setMensaje(null), 4000);
+    window.setTimeout(() => {
+      setMensaje(null);
+    }, 4000);
   };
+
+  // =========================================================
+  // CARGAR ÁREAS
+  // =========================================================
+
+  const cargarAreas = async () => {
+    const response = await fetch(
+      "/api/organizacion/areas",
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
+
+    const resultado = await leerRespuestaJson(response);
+
+    if (!response.ok || !resultado.ok) {
+      throw new Error(
+        resultado.error ||
+          "No se pudieron cargar las áreas."
+      );
+    }
+
+    setAreas(resultado.data || []);
+  };
+
+  // =========================================================
+  // CARGAR DEPARTAMENTOS
+  // =========================================================
+
+  const cargarDepartamentos = async () => {
+    const response = await fetch(
+      "/api/organizacion/departamentos",
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
+
+    const resultado = await leerRespuestaJson(response);
+
+    if (!response.ok || !resultado.ok) {
+      throw new Error(
+        resultado.error ||
+          "No se pudieron cargar los departamentos."
+      );
+    }
+
+    setDepartamentos(resultado.data || []);
+  };
+
+  // =========================================================
+  // CARGAR TODO
+  // =========================================================
 
   const cargarDatos = async () => {
     setCargando(true);
+
     try {
-      const { data: resAreas, error: errAreas } = await supabase
-        .from("areas")
-        .select("*")
-        .order("orden", { ascending: true, nullsFirst: false })
-        .order("nombre", { ascending: true });
-
-      if (errAreas) throw errAreas;
-
-      const { data: resDeptos, error: errDeptos } = await supabase
-        .from("departamentos")
-        .select("*, area:areas(id, nombre)")
-        .order("orden", { ascending: true, nullsFirst: false })
-        .order("nombre", { ascending: true });
-
-      if (errDeptos) throw errDeptos;
-
-      setAreas(resAreas || [] as any);
-      setDepartamentos(resDeptos || []);
+      await Promise.all([
+        cargarAreas(),
+        cargarDepartamentos(),
+      ]);
     } catch (error: any) {
-      mostrarMensaje("error", "Error al cargar la información: " + error.message);
+      console.error("Error cargando organización:", error);
+
+      mostrarMensaje(
+        "error",
+        error.message ||
+          "No se pudo cargar la información."
+      );
     } finally {
       setCargando(false);
     }
   };
 
-  // --- ÁREAS ---
-  const abrirModalArea = (area?: Area, esLectura = false) => {
-    setModoLectura(esLectura);
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  // =========================================================
+  // FILTROS
+  // =========================================================
+
+  const areasFiltradas = useMemo(() => {
+    const termino = busqueda
+      .trim()
+      .toLowerCase();
+
+    if (!termino) {
+      return areas;
+    }
+
+    return areas.filter((area) => {
+      return (
+        area.nombre
+          .toLowerCase()
+          .includes(termino) ||
+        area.codigo
+          ?.toLowerCase()
+          .includes(termino) ||
+        area.descripcion
+          ?.toLowerCase()
+          .includes(termino)
+      );
+    });
+  }, [areas, busqueda]);
+
+  const departamentosFiltrados = useMemo(() => {
+    const termino = busqueda
+      .trim()
+      .toLowerCase();
+
+    if (!termino) {
+      return departamentos;
+    }
+
+    return departamentos.filter((depto) => {
+      return (
+        depto.nombre
+          .toLowerCase()
+          .includes(termino) ||
+        depto.codigo
+          ?.toLowerCase()
+          .includes(termino) ||
+        depto.descripcion
+          ?.toLowerCase()
+          .includes(termino) ||
+        depto.area?.nombre
+          ?.toLowerCase()
+          .includes(termino)
+      );
+    });
+  }, [departamentos, busqueda]);
+
+  // =========================================================
+  // MODAL ÁREA
+  // =========================================================
+
+  const abrirModalArea = (
+    area?: Area,
+    lectura = false
+  ) => {
+    setModoLectura(lectura);
+
     if (area) {
       setAreaEditando(area);
+
       setFormArea({
         codigo: area.codigo || "",
         nombre: area.nombre || "",
@@ -138,6 +349,7 @@ export default function AreasDepartamentosPage() {
       });
     } else {
       setAreaEditando(null);
+
       setFormArea({
         codigo: "",
         nombre: "",
@@ -146,774 +358,1538 @@ export default function AreasDepartamentosPage() {
         activo: true,
       });
     }
+
     setModalAreaOpen(true);
   };
 
-  const guardarArea = async (e: React.FormEvent) => {
+  // =========================================================
+  // CREAR / EDITAR ÁREA
+  // =========================================================
+
+  const guardarArea = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
-    if (modoLectura || !formArea.nombre.trim()) return;
+
+    if (modoLectura) {
+      return;
+    }
+
+    if (!formArea.nombre.trim()) {
+      mostrarMensaje(
+        "error",
+        "El nombre del área es obligatorio."
+      );
+      return;
+    }
 
     setGuardando(true);
+
     try {
-      const datosArea = {
-        codigo: formArea.codigo.trim() || null,
-        nombre: formArea.nombre.trim(),
-        descripcion: formArea.descripcion.trim() || null,
-        orden: Number(formArea.orden) || 1,
-        activo: formArea.activo,
-      };
+      const headers = await authHeaders();
 
-      if (areaEditando) {
-        const { data, error } = await supabase
-          .from("areas")
-          .update(datosArea)
-          .eq("id", areaEditando.id)
-          .select();
-
-        if (error) throw error;
-        if (!data || data.length === 0) {
-          throw new Error("No se pudo actualizar el área. Verifica los permisos RLS en Supabase.");
-        }
-        mostrarMensaje("exito", "Área actualizada exitosamente.");
-      } else {
-        const { error } = await supabase.from("areas").insert([datosArea]);
-        if (error) throw error;
-        mostrarMensaje("exito", "Área creada con éxito.");
+      if (!headers.Authorization) {
+        throw new Error("No hay una sesión autenticada.");
       }
 
+      const payload = {
+        codigo:
+          formArea.codigo.trim() || null,
+
+        nombre:
+          formArea.nombre.trim(),
+
+        descripcion:
+          formArea.descripcion.trim() || null,
+
+        orden:
+          Number(formArea.orden) || 1,
+
+        activo:
+          formArea.activo,
+      };
+
+      let response: Response;
+
+      if (areaEditando) {
+        response = await fetch(
+          `/api/organizacion/areas/${areaEditando.id}`,
+          {
+            method: "PUT",
+            headers: {
+              ...headers,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+      } else {
+        response = await fetch(
+          "/api/organizacion/areas",
+          {
+            method: "POST",
+            headers: {
+              ...headers,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+      }
+
+      const resultado = await leerRespuestaJson(response);
+
+      if (!response.ok || !resultado.ok) {
+        throw new Error(
+          resultado.error ||
+            "No se pudo guardar el área."
+        );
+      }
+
+      mostrarMensaje(
+        "exito",
+        resultado.mensaje ||
+          (areaEditando
+            ? "Área actualizada correctamente."
+            : "Área creada correctamente.")
+      );
+
       setModalAreaOpen(false);
-      await cargarDatos();
+
+      await cargarAreas();
+      await cargarDepartamentos();
     } catch (error: any) {
-      mostrarMensaje("error", "Ocurrió un error: " + error.message);
+      console.error(error);
+
+      mostrarMensaje(
+        "error",
+        error.message ||
+          "Ocurrió un error al guardar el área."
+      );
     } finally {
       setGuardando(false);
     }
   };
 
-  const alternarEstadoArea = async (area: Area) => {
-    try {
-      const { error } = await supabase
-        .from("areas")
-        .update({ activo: !area.activo })
-        .eq("id", area.id);
+  // =========================================================
+  // CAMBIAR ESTADO ÁREA
+  // =========================================================
 
-      if (error) throw error;
-      mostrarMensaje("exito", `Área ${!area.activo ? "activada" : "desactivada"}.`);
-      await cargarDatos();
+  const alternarEstadoArea = async (
+    area: Area
+  ) => {
+    setCambiandoEstado(area.id);
+
+    try {
+      const headers = await authHeaders();
+
+      if (!headers.Authorization) {
+        throw new Error("No hay una sesión autenticada.");
+      }
+
+      const response = await fetch(
+        `/api/organizacion/areas/${area.id}/estado`,
+        {
+          method: "PATCH",
+          headers: {
+            ...headers,
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            activo: !area.activo,
+          }),
+        }
+      );
+
+      const resultado = await leerRespuestaJson(response);
+
+      if (!response.ok || !resultado.ok) {
+        throw new Error(
+          resultado.error ||
+            "No se pudo cambiar el estado."
+        );
+      }
+
+      mostrarMensaje(
+        "exito",
+        resultado.mensaje ||
+          `Área ${
+            !area.activo
+              ? "activada"
+              : "desactivada"
+          } correctamente.`
+      );
+
+      await cargarAreas();
+      await cargarDepartamentos();
     } catch (error: any) {
-      mostrarMensaje("error", "Error al cambiar estado: " + error.message);
+      console.error(error);
+
+      mostrarMensaje(
+        "error",
+        error.message ||
+          "No se pudo cambiar el estado del área."
+      );
+    } finally {
+      setCambiandoEstado(null);
     }
   };
 
-  // --- DEPARTAMENTOS ---
-  const abrirModalDepto = (depto?: Departamento, esLectura = false) => {
-    setModoLectura(esLectura);
+  // =========================================================
+  // MODAL DEPARTAMENTO
+  // =========================================================
+
+  const abrirModalDepto = (
+    depto?: Departamento,
+    lectura = false
+  ) => {
+    setModoLectura(lectura);
+
     if (depto) {
       setDeptoEditando(depto);
+
       setFormDepto({
         area_id: depto.area_id || "",
         codigo: depto.codigo || "",
         nombre: depto.nombre || "",
-        descripcion: depto.descripcion || "",
-        responsable_nombre: depto.responsable_nombre || "",
-        email_contacto: depto.email_contacto || "",
+        descripcion:
+          depto.descripcion || "",
         orden: depto.orden || 1,
         activo: depto.activo ?? true,
       });
     } else {
       setDeptoEditando(null);
+
+      const primeraAreaActiva =
+        areas.find((area) => area.activo);
+
       setFormDepto({
-        area_id: areas.length > 0 ? areas[0].id : "",
+        area_id:
+          primeraAreaActiva?.id || "",
+
         codigo: "",
         nombre: "",
         descripcion: "",
-        responsable_nombre: "",
-        email_contacto: "",
         orden: departamentos.length + 1,
         activo: true,
       });
     }
+
     setModalDeptoOpen(true);
   };
 
-  const guardarDepto = async (e: React.FormEvent) => {
+  // =========================================================
+  // CREAR / EDITAR DEPARTAMENTO
+  // =========================================================
+
+  const guardarDepto = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
-    if (modoLectura || !formDepto.nombre.trim() || !formDepto.area_id) return;
+
+    if (modoLectura) {
+      return;
+    }
+
+    if (!formDepto.area_id) {
+      mostrarMensaje(
+        "error",
+        "Debe seleccionar un área."
+      );
+      return;
+    }
+
+    if (!formDepto.nombre.trim()) {
+      mostrarMensaje(
+        "error",
+        "El nombre del departamento es obligatorio."
+      );
+      return;
+    }
 
     setGuardando(true);
+
     try {
-      const datosDepto: DepartamentoDB = {
-        area_id: formDepto.area_id,
-        codigo: formDepto.codigo.trim() || null,
-        nombre: formDepto.nombre.trim(),
-        descripcion: formDepto.descripcion.trim() || null,
-        responsable_nombre: formDepto.responsable_nombre.trim() || null,
-        email_contacto: formDepto.email_contacto.trim() || null,
-        orden: Number(formDepto.orden) || 1,
-        activo: formDepto.activo,
-      } as any;
+      const headers = await authHeaders();
 
-      if (deptoEditando) {
-        const { data, error } = await supabase
-          .from("departamentos")
-          .update(datosDepto)
-          .eq("id", deptoEditando.id)
-          .select();
-
-        if (error) throw error;
-        if (!data || data.length === 0) {
-          throw new Error("No se pudo actualizar el departamento. Verifica los permisos RLS en Supabase.");
-        }
-        mostrarMensaje("exito", "Departamento actualizado exitosamente.");
-      } else {
-        const { error } = await supabase.from("departamentos").insert([datosDepto]);
-        if (error) throw error;
-        mostrarMensaje("exito", "Departamento creado con éxito.");
+      if (!headers.Authorization) {
+        throw new Error("No hay una sesión autenticada.");
       }
 
+      const payload = {
+        area_id:
+          formDepto.area_id,
+
+        codigo:
+          formDepto.codigo.trim() || null,
+
+        nombre:
+          formDepto.nombre.trim(),
+
+        descripcion:
+          formDepto.descripcion.trim() ||
+          null,
+
+        orden:
+          Number(formDepto.orden) || 1,
+
+        activo:
+          formDepto.activo,
+      };
+
+      let response: Response;
+
+      if (deptoEditando) {
+        response = await fetch(
+          `/api/organizacion/departamentos/${deptoEditando.id}`,
+          {
+            method: "PUT",
+            headers: {
+              ...headers,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+      } else {
+        response = await fetch(
+          "/api/organizacion/departamentos",
+          {
+            method: "POST",
+            headers: {
+              ...headers,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+      }
+
+      const resultado = await leerRespuestaJson(response);
+
+      if (!response.ok || !resultado.ok) {
+        throw new Error(
+          resultado.error ||
+            "No se pudo guardar el departamento."
+        );
+      }
+
+      mostrarMensaje(
+        "exito",
+        resultado.mensaje ||
+          (deptoEditando
+            ? "Departamento actualizado correctamente."
+            : "Departamento creado correctamente.")
+      );
+
       setModalDeptoOpen(false);
-      await cargarDatos();
+
+      await cargarDepartamentos();
     } catch (error: any) {
-      mostrarMensaje("error", "Ocurrió un error: " + error.message);
+      console.error(error);
+
+      mostrarMensaje(
+        "error",
+        error.message ||
+          "Ocurrió un error al guardar el departamento."
+      );
     } finally {
       setGuardando(false);
     }
   };
 
-  const alternarEstadoDepto = async (depto: Departamento) => {
-    try {
-      const { error } = await supabase
-        .from("departamentos")
-        .update({ activo: !depto.activo })
-        .eq("id", depto.id);
+  // =========================================================
+  // CAMBIAR ESTADO DEPARTAMENTO
+  // =========================================================
 
-      if (error) throw error;
-      mostrarMensaje("exito", `Departamento ${!depto.activo ? "activado" : "desactivado"}.`);
-      await cargarDatos();
+  const alternarEstadoDepto = async (
+    depto: Departamento
+  ) => {
+    setCambiandoEstado(depto.id);
+
+    try {
+      const headers = await authHeaders();
+
+      if (!headers.Authorization) {
+        throw new Error("No hay una sesión autenticada.");
+      }
+
+      const response = await fetch(
+        `/api/organizacion/departamentos/${depto.id}/estado`,
+        {
+          method: "PATCH",
+          headers: {
+            ...headers,
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            activo: !depto.activo,
+          }),
+        }
+      );
+
+      const resultado = await leerRespuestaJson(response);
+
+      if (!response.ok || !resultado.ok) {
+        throw new Error(
+          resultado.error ||
+            "No se pudo cambiar el estado."
+        );
+      }
+
+      mostrarMensaje(
+        "exito",
+        resultado.mensaje ||
+          `Departamento ${
+            !depto.activo
+              ? "activado"
+              : "desactivado"
+          } correctamente.`
+      );
+
+      await cargarDepartamentos();
     } catch (error: any) {
-      mostrarMensaje("error", "Error al cambiar estado: " + error.message);
+      console.error(error);
+
+      mostrarMensaje(
+        "error",
+        error.message ||
+          "No se pudo cambiar el estado."
+      );
+    } finally {
+      setCambiandoEstado(null);
     }
   };
 
-  // Filtros
-  const areasFiltradas = areas.filter(
-    (a) =>
-      a.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-      (a.codigo && a.codigo.toLowerCase().includes(busqueda.toLowerCase())) ||
-      (a.descripcion && a.descripcion.toLowerCase().includes(busqueda.toLowerCase()))
-  );
-
-  const deptosFiltrados = departamentos.filter(
-    (d) =>
-      d.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-      (d.codigo && d.codigo.toLowerCase().includes(busqueda.toLowerCase())) ||
-      (d.area?.nombre && d.area.nombre.toLowerCase().includes(busqueda.toLowerCase())) ||
-      (d.responsable_nombre && d.responsable_nombre.toLowerCase().includes(busqueda.toLowerCase()))
-  );
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Encabezado */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <Building2 className="h-7 w-7 text-blue-600" />
-            Áreas y Departamentos
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            Administración de la estructura organizacional
-          </p>
-        </div>
+    <div className="min-h-full bg-slate-50 dark:bg-slate-950 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
 
-        <div>
-          {tabActiva === "areas" ? (
-            <button
-              onClick={() => abrirModalArea(undefined, false)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all shadow-md shadow-blue-500/20"
-            >
-              <Plus className="h-4 w-4" />
-              Nueva Área
-            </button>
-          ) : (
-            <button
-              onClick={() => abrirModalDepto(undefined, false)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-all shadow-md shadow-blue-500/20"
-            >
-              <Plus className="h-4 w-4" />
-              Nuevo Departamento
-            </button>
-          )}
-        </div>
-      </div>
+        {/* =====================================================
+            HEADER
+        ====================================================== */}
 
-      {/* Alerta */}
-      {mensaje && (
-        <div
-          className={`p-4 rounded-xl flex items-center gap-3 border text-sm font-medium transition-all ${
-            mensaje.tipo === "exito"
-              ? "bg-green-50 text-green-800 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800"
-              : "bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800"
-          }`}
-        >
-          {mensaje.tipo === "exito" ? (
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-          ) : (
-            <AlertCircle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
-          )}
-          <span>{mensaje.texto}</span>
-        </div>
-      )}
+        <div className="relative overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-600/5 via-indigo-600/5 to-violet-600/5" />
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 dark:border-slate-800">
-        <button
-          onClick={() => {
-            setTabActiva("areas");
-            setBusqueda("");
-          }}
-          className={`flex items-center gap-2 py-3 px-6 text-sm font-bold border-b-2 transition-all ${
-            tabActiva === "areas"
-              ? "border-blue-600 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200"
-          }`}
-        >
-          <Building2 className="h-4 w-4" />
-          Áreas Generales ({areas.length})
-        </button>
+          <div className="relative p-6 md:p-7">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
 
-        <button
-          onClick={() => {
-            setTabActiva("departamentos");
-            setBusqueda("");
-          }}
-          className={`flex items-center gap-2 py-3 px-6 text-sm font-bold border-b-2 transition-all ${
-            tabActiva === "departamentos"
-              ? "border-blue-600 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200"
-          }`}
-        >
-          <FolderTree className="h-4 w-4" />
-          Departamentos ({departamentos.length})
-        </button>
-      </div>
+              <div className="flex items-start gap-4">
+                <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-600/20">
+                  <Building2 className="h-6 w-6 text-white" />
+                </div>
 
-      {/* Buscador */}
-      <div className="relative">
-        <Search className="absolute left-3.5 top-3 h-4 w-4 text-gray-400" />
-        <input
-          type="text"
-          placeholder={
-            tabActiva === "areas"
-              ? "Buscar por nombre, código o descripción de áreas..."
-              : "Buscar por departamento, área, código o responsable..."
-          }
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+                    Áreas y Departamentos
+                  </h1>
 
-      {cargando ? (
-        <div className="flex justify-center items-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        </div>
-      ) : (
-        <>
-          {/* TAB ÁREAS */}
-          {tabActiva === "areas" && (
-            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/40 text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      <th className="py-3.5 px-4">Código</th>
-                      <th className="py-3.5 px-4">Nombre del Área</th>
-                      <th className="py-3.5 px-4">Descripción</th>
-                      <th className="py-3.5 px-4 text-center">Orden</th>
-                      <th className="py-3.5 px-4 text-center">Estado</th>
-                      <th className="py-3.5 px-4 text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800 text-sm">
-                    {areasFiltradas.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-gray-400 text-sm">
-                          No se encontraron áreas registradas.
-                        </td>
-                      </tr>
-                    ) : (
-                      areasFiltradas.map((area) => (
-                        <tr
-                          key={area.id}
-                          className="hover:bg-gray-50/50 dark:hover:bg-slate-800/40 transition-colors"
-                        >
-                          <td className="py-3.5 px-4 font-mono font-semibold text-xs text-gray-600 dark:text-slate-400">
-                            {area.codigo || "-"}
-                          </td>
-                          <td className="py-3.5 px-4 font-bold text-gray-900 dark:text-white">
-                            {area.nombre}
-                          </td>
-                          <td className="py-3.5 px-4 text-xs text-gray-500 dark:text-slate-400 max-w-xs truncate">
-                            {area.descripcion || "-"}
-                          </td>
-                          <td className="py-3.5 px-4 text-center font-medium text-xs text-gray-600 dark:text-slate-400">
-                            {area.orden || 1}
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            <span
-                              className={`px-2.5 py-1 text-xs font-bold rounded-full ${
-                                area.activo
-                                  ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-400"
-                                  : "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400"
-                              }`}
-                            >
-                              {area.activo ? "Activo" : "Inactivo"}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Botón Ver (Solo Lectura) */}
-                              <button
-                                onClick={() => abrirModalArea(area, true)}
-                                title="Ver Detalle"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-all"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </button>
-                              {/* Botón Editar */}
-                              <button
-                                onClick={() => abrirModalArea(area, false)}
-                                title="Editar Área"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-all"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              {/* Switch Estado */}
-                              <button
-                                onClick={() => alternarEstadoArea(area)}
-                                title={area.activo ? "Desactivar" : "Activar"}
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-all"
-                              >
-                                {area.activo ? (
-                                  <ToggleRight className="h-5 w-5 text-green-600" />
-                                ) : (
-                                  <ToggleLeft className="h-5 w-5 text-gray-400" />
-                                )}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Administración de la estructura organizacional
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
 
-          {/* TAB DEPARTAMENTOS */}
-          {tabActiva === "departamentos" && (
-            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/40 text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      <th className="py-3.5 px-4">Código</th>
-                      <th className="py-3.5 px-4">Departamento</th>
-                      <th className="py-3.5 px-4">Área Asignada</th>
-                      <th className="py-3.5 px-4">Responsable / Contacto</th>
-                      <th className="py-3.5 px-4 text-center">Estado</th>
-                      <th className="py-3.5 px-4 text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800 text-sm">
-                    {deptosFiltrados.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-gray-400 text-sm">
-                          No se encontraron departamentos registrados.
-                        </td>
-                      </tr>
-                    ) : (
-                      deptosFiltrados.map((depto) => (
-                        <tr
-                          key={depto.id}
-                          className="hover:bg-gray-50/50 dark:hover:bg-slate-800/40 transition-colors"
-                        >
-                          <td className="py-3.5 px-4 font-mono font-semibold text-xs text-gray-600 dark:text-slate-400">
-                            {depto.codigo || "-"}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <p className="font-bold text-gray-900 dark:text-white">{depto.nombre}</p>
-                            {depto.descripcion && (
-                              <p className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-xs">
-                                {depto.descripcion}
-                              </p>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-4 font-semibold text-blue-600 dark:text-blue-400 text-xs">
-                            {depto.area?.nombre || "Sin Asignar"}
-                          </td>
-                          <td className="py-3.5 px-4 text-xs">
-                            <p className="font-medium text-gray-900 dark:text-white">
-                              {depto.responsable_nombre || "-"}
-                            </p>
-                            <p className="text-gray-500 dark:text-slate-400">
-                              {depto.email_contacto || ""}
-                            </p>
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            <span
-                              className={`px-2.5 py-1 text-xs font-bold rounded-full ${
-                                depto.activo
-                                  ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-400"
-                                  : "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400"
-                              }`}
-                            >
-                              {depto.activo ? "Activo" : "Inactivo"}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Botón Ver (Solo Lectura) */}
-                              <button
-                                onClick={() => abrirModalDepto(depto, true)}
-                                title="Ver Detalle"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-all"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </button>
-                              {/* Botón Editar */}
-                              <button
-                                onClick={() => abrirModalDepto(depto, false)}
-                                title="Editar Departamento"
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-all"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              {/* Switch Estado */}
-                              <button
-                                onClick={() => alternarEstadoDepto(depto)}
-                                title={depto.activo ? "Desactivar" : "Activar"}
-                                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 transition-all"
-                              >
-                                {depto.activo ? (
-                                  <ToggleRight className="h-5 w-5 text-green-600" />
-                                ) : (
-                                  <ToggleLeft className="h-5 w-5 text-gray-400" />
-                                )}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* --- MODAL DE ÁREA --- */}
-      {modalAreaOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b pb-3 border-gray-100 dark:border-slate-800">
-              <h3 className="font-bold text-gray-900 dark:text-white text-base flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-blue-600" />
-                {modoLectura
-                  ? "Detalle del Área"
-                  : areaEditando
-                  ? "Editar Área"
-                  : "Crear Nueva Área"}
-              </h3>
               <button
-                onClick={() => setModalAreaOpen(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200"
+                onClick={() =>
+                  tabActiva === "areas"
+                    ? abrirModalArea()
+                    : abrirModalDepto()
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition-all hover:-translate-y-0.5 hover:shadow-xl hover:shadow-blue-600/25"
               >
-                <X className="h-5 w-5" />
+                <Plus className="h-4 w-4" />
+
+                {tabActiva === "areas"
+                  ? "Nueva Área"
+                  : "Nuevo Departamento"}
               </button>
             </div>
+          </div>
+        </div>
 
-            <form onSubmit={guardarArea} className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <Hash className="h-3.5 w-3.5 text-gray-400" />
+        {/* =====================================================
+            MENSAJE
+        ====================================================== */}
+
+        {mensaje && (
+          <div
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3.5 text-sm font-medium shadow-sm ${
+              mensaje.tipo === "exito"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"
+                : "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+            }`}
+          >
+            {mensaje.tipo === "exito" ? (
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+            ) : (
+              <AlertCircle className="h-5 w-5 shrink-0" />
+            )}
+
+            <span>{mensaje.texto}</span>
+
+            <button
+              onClick={() =>
+                setMensaje(null)
+              }
+              className="ml-auto rounded-lg p-1 opacity-60 hover:opacity-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* =====================================================
+            RESUMEN
+        ====================================================== */}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Áreas
+                </p>
+
+                <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
+                  {areas.length}
+                </p>
+              </div>
+
+              <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center">
+                <Building2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Departamentos
+                </p>
+
+                <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
+                  {departamentos.length}
+                </p>
+              </div>
+
+              <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 flex items-center justify-center">
+                <FolderTree className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Estructura
+                </p>
+
+                <p className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
+                  Organización activa
+                </p>
+              </div>
+
+              <div className="h-10 w-10 rounded-xl bg-violet-50 dark:bg-violet-950/40 flex items-center justify-center">
+                <Layers3 className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* =====================================================
+            TABS + BUSCADOR
+        ====================================================== */}
+
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4">
+
+            <div className="flex gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
+
+              <button
+                onClick={() => {
+                  setTabActiva("areas");
+                  setBusqueda("");
+                }}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all ${
+                  tabActiva === "areas"
+                    ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+              >
+                <Building2 className="h-4 w-4" />
+
+                Áreas
+
+                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs">
+                  {areas.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setTabActiva("departamentos");
+                  setBusqueda("");
+                }}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all ${
+                  tabActiva === "departamentos"
+                    ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+              >
+                <FolderTree className="h-4 w-4" />
+
+                Departamentos
+
+                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs">
+                  {departamentos.length}
+                </span>
+              </button>
+
+            </div>
+
+            <div className="relative w-full lg:w-96">
+              <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+
+              <input
+                type="text"
+                value={busqueda}
+                onChange={(e) =>
+                  setBusqueda(e.target.value)
+                }
+                placeholder={
+                  tabActiva === "areas"
+                    ? "Buscar área..."
+                    : "Buscar departamento..."
+                }
+                className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 pl-10 pr-4 py-2.5 text-sm text-slate-900 dark:text-white outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+
+          </div>
+        </div>
+
+        {/* =====================================================
+            CONTENIDO
+        ====================================================== */}
+
+        {cargando ? (
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-20 flex flex-col items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+
+            <p className="mt-3 text-sm text-slate-500">
+              Cargando estructura organizacional...
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* =================================================
+                TAB ÁREAS
+            ================================================== */}
+
+            {tabActiva === "areas" && (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+
+                <div className="overflow-x-auto">
+
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Código
+                        </th>
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Área
+                        </th>
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Descripción
+                        </th>
+
+                        <th className="px-5 py-4 text-center text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Orden
+                        </th>
+
+                        <th className="px-5 py-4 text-center text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Estado
+                        </th>
+
+                        <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Acciones
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+
+                      {areasFiltradas.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-5 py-16 text-center"
+                          >
+                            <Building2 className="mx-auto h-10 w-10 text-slate-300" />
+
+                            <p className="mt-3 text-sm font-semibold text-slate-500">
+                              No se encontraron áreas
+                            </p>
+                          </td>
+                        </tr>
+                      ) : (
+                        areasFiltradas.map(
+                          (area) => (
+                            <tr
+                              key={area.id}
+                              className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                            >
+                              <td className="px-5 py-4">
+                                <span className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 px-2.5 py-1 font-mono text-xs font-bold text-slate-600 dark:text-slate-300">
+                                  {area.codigo || "-"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4">
+                                <div className="font-bold text-sm text-slate-900 dark:text-white">
+                                  {area.nombre}
+                                </div>
+                              </td>
+
+                              <td className="px-5 py-4 max-w-md">
+                                <span className="text-sm text-slate-500 dark:text-slate-400">
+                                  {area.descripcion || "Sin descripción"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4 text-center">
+                                <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                                  {area.orden ?? "-"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4 text-center">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                                    area.activo
+                                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+                                      : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                                  }`}
+                                >
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                      area.activo
+                                        ? "bg-emerald-500"
+                                        : "bg-slate-400"
+                                    }`}
+                                  />
+
+                                  {area.activo
+                                    ? "Activo"
+                                    : "Inactivo"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4">
+                                <div className="flex justify-end items-center gap-1">
+
+                                  <button
+                                    onClick={() =>
+                                      abrirModalArea(
+                                        area,
+                                        true
+                                      )
+                                    }
+                                    title="Visualizar"
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-slate-800 dark:hover:text-blue-400"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() =>
+                                      abrirModalArea(
+                                        area,
+                                        false
+                                      )
+                                    }
+                                    title="Editar"
+                                    disabled={
+                                      area.editable === false
+                                    }
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-800 dark:hover:text-amber-400 disabled:cursor-not-allowed disabled:opacity-30"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() =>
+                                      alternarEstadoArea(
+                                        area
+                                      )
+                                    }
+                                    title={
+                                      area.editable === false
+                                        ? "Área protegida"
+                                        : area.activo
+                                        ? "Desactivar"
+                                        : "Activar"
+                                    }
+                                    disabled={
+                                      area.editable === false ||
+                                      cambiandoEstado === area.id
+                                    }
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white disabled:opacity-50"
+                                  >
+                                    {cambiandoEstado ===
+                                    area.id ? (
+                                      <Loader2 className="h-5 w-5 animate-spin" />
+                                    ) : area.activo ? (
+                                      <ToggleRight className="h-5 w-5 text-emerald-500" />
+                                    ) : (
+                                      <ToggleLeft className="h-5 w-5" />
+                                    )}
+                                  </button>
+
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        )
+                      )}
+
+                    </tbody>
+                  </table>
+
+                </div>
+              </div>
+            )}
+
+            {/* =================================================
+                TAB DEPARTAMENTOS
+            ================================================== */}
+
+            {tabActiva === "departamentos" && (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+
+                <div className="overflow-x-auto">
+
+                  <table className="w-full text-left">
+
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Código
+                        </th>
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Departamento
+                        </th>
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Área
+                        </th>
+
+                        <th className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Descripción
+                        </th>
+
+                        <th className="px-5 py-4 text-center text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Estado
+                        </th>
+
+                        <th className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
+                          Acciones
+                        </th>
+
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+
+                      {departamentosFiltrados.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-5 py-16 text-center"
+                          >
+                            <FolderTree className="mx-auto h-10 w-10 text-slate-300" />
+
+                            <p className="mt-3 text-sm font-semibold text-slate-500">
+                              No se encontraron departamentos
+                            </p>
+                          </td>
+                        </tr>
+                      ) : (
+                        departamentosFiltrados.map(
+                          (depto) => (
+                            <tr
+                              key={depto.id}
+                              className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                            >
+
+                              <td className="px-5 py-4">
+                                <span className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 px-2.5 py-1 font-mono text-xs font-bold text-slate-600 dark:text-slate-300">
+                                  {depto.codigo || "-"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4">
+                                <div className="font-bold text-sm text-slate-900 dark:text-white">
+                                  {depto.nombre}
+                                </div>
+
+                                <div className="mt-1 text-xs text-slate-400">
+                                  Orden {depto.orden ?? "-"}
+                                </div>
+                              </td>
+
+                              <td className="px-5 py-4">
+                                <span className="inline-flex items-center gap-2 rounded-xl bg-blue-50 dark:bg-blue-950/30 px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-400">
+                                  <Building2 className="h-3.5 w-3.5" />
+
+                                  {depto.area?.nombre ||
+                                    "Sin asignar"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4 max-w-md">
+                                <span className="text-sm text-slate-500 dark:text-slate-400">
+                                  {depto.descripcion ||
+                                    "Sin descripción"}
+                                </span>
+                              </td>
+
+                              <td className="px-5 py-4 text-center">
+
+                                <span
+                                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                                    depto.activo
+                                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
+                                      : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                                  }`}
+                                >
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                      depto.activo
+                                        ? "bg-emerald-500"
+                                        : "bg-slate-400"
+                                    }`}
+                                  />
+
+                                  {depto.activo
+                                    ? "Activo"
+                                    : "Inactivo"}
+                                </span>
+
+                              </td>
+
+                              <td className="px-5 py-4">
+
+                                <div className="flex justify-end items-center gap-1">
+
+                                  <button
+                                    onClick={() =>
+                                      abrirModalDepto(
+                                        depto,
+                                        true
+                                      )
+                                    }
+                                    title="Visualizar"
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-slate-800 dark:hover:text-blue-400"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() =>
+                                      abrirModalDepto(
+                                        depto,
+                                        false
+                                      )
+                                    }
+                                    title="Editar"
+                                    disabled={
+                                      depto.editable === false
+                                    }
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-800 dark:hover:text-amber-400 disabled:cursor-not-allowed disabled:opacity-30"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+
+                                  <button
+                                    onClick={() =>
+                                      alternarEstadoDepto(
+                                        depto
+                                      )
+                                    }
+                                    title={
+                                      depto.editable === false
+                                        ? "Departamento protegido"
+                                        : depto.activo
+                                        ? "Desactivar"
+                                        : "Activar"
+                                    }
+                                    disabled={
+                                      depto.editable === false ||
+                                      cambiandoEstado === depto.id
+                                    }
+                                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white disabled:opacity-50"
+                                  >
+                                    {cambiandoEstado ===
+                                    depto.id ? (
+                                      <Loader2 className="h-5 w-5 animate-spin" />
+                                    ) : depto.activo ? (
+                                      <ToggleRight className="h-5 w-5 text-emerald-500" />
+                                    ) : (
+                                      <ToggleLeft className="h-5 w-5" />
+                                    )}
+                                  </button>
+
+                                </div>
+
+                              </td>
+
+                            </tr>
+                          )
+                        )
+                      )}
+
+                    </tbody>
+                  </table>
+
+                </div>
+              </div>
+            )}
+
+          </>
+        )}
+      </div>
+
+      {/* =======================================================
+          MODAL ÁREA
+      ======================================================== */}
+
+      {modalAreaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+
+          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl">
+
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-5 text-white">
+
+              <div className="flex items-center justify-between">
+
+                <div className="flex items-center gap-3">
+
+                  <div className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center">
+                    <Building2 className="h-5 w-5" />
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold text-lg">
+                      {modoLectura
+                        ? "Detalle del Área"
+                        : areaEditando
+                        ? "Editar Área"
+                        : "Nueva Área"}
+                    </h3>
+
+                    <p className="text-xs text-blue-100">
+                      Estructura organizacional
+                    </p>
+                  </div>
+
+                </div>
+
+                <button
+                  onClick={() =>
+                    setModalAreaOpen(false)
+                  }
+                  className="rounded-xl p-2 text-white/70 hover:bg-white/10 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+
+              </div>
+            </div>
+
+            <form
+              onSubmit={guardarArea}
+              className="p-6 space-y-5"
+            >
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <Hash className="h-3.5 w-3.5 text-blue-500" />
                     Código
                   </label>
+
                   <input
                     type="text"
-                    disabled={modoLectura}
                     value={formArea.codigo}
-                    onChange={(e) => setFormArea({ ...formArea, codigo: e.target.value })}
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormArea({
+                        ...formArea,
+                        codigo:
+                          e.target.value.toUpperCase(),
+                      })
+                    }
                     placeholder="DIR-EJ"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase font-mono disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 font-mono text-sm text-slate-900 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                   />
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                <div className="md:col-span-2">
+
+                  <label className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">
                     Nombre del Área *
                   </label>
+
                   <input
                     type="text"
                     required
-                    disabled={modoLectura}
                     value={formArea.nombre}
-                    onChange={(e) => setFormArea({ ...formArea, nombre: e.target.value })}
-                    placeholder="Ej. Dirección Ejecutiva"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormArea({
+                        ...formArea,
+                        nombre: e.target.value,
+                      })
+                    }
+                    placeholder="Ej. Área Financiera"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                   />
+
                 </div>
+
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+
+                <label className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">
                   Descripción
                 </label>
+
                 <textarea
-                  rows={3}
-                  disabled={modoLectura}
+                  rows={4}
                   value={formArea.descripcion}
-                  onChange={(e) => setFormArea({ ...formArea, descripcion: e.target.value })}
-                  placeholder="Detalle de funciones o alcance del área..."
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                  disabled={modoLectura}
+                  onChange={(e) =>
+                    setFormArea({
+                      ...formArea,
+                      descripcion:
+                        e.target.value,
+                    })
+                  }
+                  placeholder="Descripción general del área..."
+                  className="w-full resize-none rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                 />
+
               </div>
 
-              <div className="grid grid-cols-2 gap-4 items-center">
+              <div className="grid grid-cols-2 gap-4">
+
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <ListOrdered className="h-3.5 w-3.5 text-gray-400" />
+
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <ListOrdered className="h-3.5 w-3.5 text-blue-500" />
                     Orden
                   </label>
+
                   <input
                     type="number"
-                    min="1"
-                    disabled={modoLectura}
+                    min={1}
                     value={formArea.orden}
-                    onChange={(e) => setFormArea({ ...formArea, orden: parseInt(e.target.value) || 1 })}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormArea({
+                        ...formArea,
+                        orden:
+                          Number(
+                            e.target.value
+                          ) || 1,
+                      })
+                    }
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                   />
+
                 </div>
 
-                <div className="flex items-center gap-2 pt-5">
-                  <input
-                    type="checkbox"
-                    id="activoArea"
-                    disabled={modoLectura}
-                    checked={formArea.activo}
-                    onChange={(e) => setFormArea({ ...formArea, activo: e.target.checked })}
-                    className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
-                  />
-                  <label htmlFor="activoArea" className="text-xs font-medium text-gray-700 dark:text-slate-300">
-                    Área Activa
+                <div className="flex items-end">
+
+                  <label className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3">
+
+                    <input
+                      type="checkbox"
+                      checked={formArea.activo}
+                      disabled={modoLectura}
+                      onChange={(e) =>
+                        setFormArea({
+                          ...formArea,
+                          activo:
+                            e.target.checked,
+                        })
+                      }
+                      className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                    />
+
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Área activa
+                      </p>
+
+                      <p className="text-[11px] text-slate-400">
+                        Disponible para asignaciones
+                      </p>
+                    </div>
+
                   </label>
+
                 </div>
+
               </div>
 
-              <div className="flex justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
+              <div className="flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800 pt-5">
+
                 <button
                   type="button"
-                  onClick={() => setModalAreaOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+                  onClick={() =>
+                    setModalAreaOpen(false)
+                  }
+                  className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
-                  {modoLectura ? "Cerrar" : "Cancelar"}
+                  {modoLectura
+                    ? "Cerrar"
+                    : "Cancelar"}
                 </button>
+
                 {!modoLectura && (
                   <button
                     type="submit"
                     disabled={guardando}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition-all disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 disabled:opacity-50"
                   >
-                    {guardando && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {areaEditando ? "Guardar Cambios" : "Crear Área"}
+
+                    {guardando ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+
+                    {areaEditando
+                      ? "Guardar cambios"
+                      : "Crear área"}
+
                   </button>
                 )}
+
               </div>
+
             </form>
+
           </div>
         </div>
       )}
 
-      {/* --- MODAL DE DEPARTAMENTO --- */}
+      {/* =======================================================
+          MODAL DEPARTAMENTO
+      ======================================================== */}
+
       {modalDeptoOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b pb-3 border-gray-100 dark:border-slate-800">
-              <h3 className="font-bold text-gray-900 dark:text-white text-base flex items-center gap-2">
-                <FolderTree className="h-5 w-5 text-blue-600" />
-                {modoLectura
-                  ? "Detalle del Departamento"
-                  : deptoEditando
-                  ? "Editar Departamento"
-                  : "Crear Nuevo Departamento"}
-              </h3>
-              <button
-                onClick={() => setModalDeptoOpen(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200"
-              >
-                <X className="h-5 w-5" />
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+
+          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl">
+
+            <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-5 text-white">
+
+              <div className="flex items-center justify-between">
+
+                <div className="flex items-center gap-3">
+
+                  <div className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center">
+                    <FolderTree className="h-5 w-5" />
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold text-lg">
+                      {modoLectura
+                        ? "Detalle del Departamento"
+                        : deptoEditando
+                        ? "Editar Departamento"
+                        : "Nuevo Departamento"}
+                    </h3>
+
+                    <p className="text-xs text-indigo-100">
+                      Organización interna
+                    </p>
+                  </div>
+
+                </div>
+
+                <button
+                  onClick={() =>
+                    setModalDeptoOpen(false)
+                  }
+                  className="rounded-xl p-2 text-white/70 hover:bg-white/10 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+
+              </div>
             </div>
 
-            <form onSubmit={guardarDepto} className="space-y-4">
+            <form
+              onSubmit={guardarDepto}
+              className="p-6 space-y-5"
+            >
+
               <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
-                  Área Pertenece *
+
+                <label className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">
+                  Área a la que pertenece *
                 </label>
+
                 <select
                   required
-                  disabled={modoLectura}
                   value={formDepto.area_id}
-                  onChange={(e) => setFormDepto({ ...formDepto, area_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                  disabled={modoLectura}
+                  onChange={(e) =>
+                    setFormDepto({
+                      ...formDepto,
+                      area_id:
+                        e.target.value,
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm font-medium text-slate-900 dark:text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
                 >
-                  <option value="" disabled>
+
+                  <option value="">
                     -- Seleccione un Área --
                   </option>
-                  {areas.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.nombre}
-                    </option>
-                  ))}
+
+                  {areas
+                    .filter(
+                      (area) =>
+                        area.activo ||
+                        area.id ===
+                          formDepto.area_id
+                    )
+                    .map((area) => (
+                      <option
+                        key={area.id}
+                        value={area.id}
+                      >
+                        {area.codigo
+                          ? `${area.codigo} — `
+                          : ""}
+                        {area.nombre}
+                      </option>
+                    ))}
+
                 </select>
+
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <Hash className="h-3.5 w-3.5 text-gray-400" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+                <div>
+
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <Hash className="h-3.5 w-3.5 text-indigo-500" />
                     Código
                   </label>
+
                   <input
                     type="text"
-                    disabled={modoLectura}
                     value={formDepto.codigo}
-                    onChange={(e) => setFormDepto({ ...formDepto, codigo: e.target.value })}
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormDepto({
+                        ...formDepto,
+                        codigo:
+                          e.target.value.toUpperCase(),
+                      })
+                    }
                     placeholder="DEP-SIS"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase font-mono disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 font-mono text-sm text-slate-900 dark:text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
                   />
+
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+                <div className="md:col-span-2">
+
+                  <label className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">
                     Nombre del Departamento *
                   </label>
+
                   <input
                     type="text"
                     required
-                    disabled={modoLectura}
                     value={formDepto.nombre}
-                    onChange={(e) => setFormDepto({ ...formDepto, nombre: e.target.value })}
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormDepto({
+                        ...formDepto,
+                        nombre:
+                          e.target.value,
+                      })
+                    }
                     placeholder="Ej. Departamento de Sistemas"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
                   />
+
                 </div>
+
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1">
+
+                <label className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">
                   Descripción
                 </label>
+
                 <textarea
-                  rows={2}
-                  disabled={modoLectura}
+                  rows={4}
                   value={formDepto.descripcion}
-                  onChange={(e) => setFormDepto({ ...formDepto, descripcion: e.target.value })}
+                  disabled={modoLectura}
+                  onChange={(e) =>
+                    setFormDepto({
+                      ...formDepto,
+                      descripcion:
+                        e.target.value,
+                    })
+                  }
                   placeholder="Funciones principales del departamento..."
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                  className="w-full resize-none rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
                 />
+
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <UserCheck className="h-3.5 w-3.5 text-gray-400" />
-                    Responsable
-                  </label>
-                  <input
-                    type="text"
-                    disabled={modoLectura}
-                    value={formDepto.responsable_nombre}
-                    onChange={(e) => setFormDepto({ ...formDepto, responsable_nombre: e.target.value })}
-                    placeholder="Nombre del encargado"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-4">
 
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <Mail className="h-3.5 w-3.5 text-gray-400" />
-                    Correo de Contacto
-                  </label>
-                  <input
-                    type="email"
-                    disabled={modoLectura}
-                    value={formDepto.email_contacto}
-                    onChange={(e) => setFormDepto({ ...formDepto, email_contacto: e.target.value })}
-                    placeholder="sistemas@csnf.org"
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
-                  />
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-4 items-center">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                    <ListOrdered className="h-3.5 w-3.5 text-gray-400" />
+                  <label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <ListOrdered className="h-3.5 w-3.5 text-indigo-500" />
                     Orden
                   </label>
+
                   <input
                     type="number"
-                    min="1"
-                    disabled={modoLectura}
+                    min={1}
                     value={formDepto.orden}
-                    onChange={(e) => setFormDepto({ ...formDepto, orden: parseInt(e.target.value) || 1 })}
-                    className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed"
+                    disabled={modoLectura}
+                    onChange={(e) =>
+                      setFormDepto({
+                        ...formDepto,
+                        orden:
+                          Number(
+                            e.target.value
+                          ) || 1,
+                      })
+                    }
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm text-slate-900 dark:text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
                   />
+
                 </div>
 
-                <div className="flex items-center gap-2 pt-5">
-                  <input
-                    type="checkbox"
-                    id="activoDepto"
-                    disabled={modoLectura}
-                    checked={formDepto.activo}
-                    onChange={(e) => setFormDepto({ ...formDepto, activo: e.target.checked })}
-                    className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
-                  />
-                  <label htmlFor="activoDepto" className="text-xs font-medium text-gray-700 dark:text-slate-300">
-                    Departamento Activo
+                <div className="flex items-end">
+
+                  <label className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-4 py-3">
+
+                    <input
+                      type="checkbox"
+                      checked={formDepto.activo}
+                      disabled={
+                        modoLectura ||
+                        !areas.find((area) => area.id === formDepto.area_id)?.activo
+                      }
+                      onChange={(e) =>
+                        setFormDepto({
+                          ...formDepto,
+                          activo:
+                            e.target.checked,
+                        })
+                      }
+                      className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Departamento activo
+                      </p>
+
+                      <p className="text-[11px] text-slate-400">
+                        Disponible en la estructura
+                      </p>
+                    </div>
+
                   </label>
+
                 </div>
+
               </div>
 
-              <div className="flex justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
+              <div className="flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800 pt-5">
+
                 <button
                   type="button"
-                  onClick={() => setModalDeptoOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-all"
+                  onClick={() =>
+                    setModalDeptoOpen(false)
+                  }
+                  className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
-                  {modoLectura ? "Cerrar" : "Cancelar"}
+                  {modoLectura
+                    ? "Cerrar"
+                    : "Cancelar"}
                 </button>
+
                 {!modoLectura && (
                   <button
                     type="submit"
                     disabled={guardando}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700 transition-all disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 disabled:opacity-50"
                   >
-                    {guardando && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {deptoEditando ? "Guardar Cambios" : "Crear Departamento"}
+
+                    {guardando ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+
+                    {deptoEditando
+                      ? "Guardar cambios"
+                      : "Crear departamento"}
+
                   </button>
                 )}
+
               </div>
+
             </form>
+
           </div>
         </div>
       )}
+
     </div>
   );
 }

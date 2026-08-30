@@ -1,7 +1,7 @@
 // ============================================================
 // PROFILE
 // Portal Corporación Social Niños y Familia
-// Gestión del Usuario Portal
+// Gestión centralizada del usuario y perfil activo
 // ============================================================
 
 import type {
@@ -19,19 +19,27 @@ import databaseRepository from "@/lib/database/repositories";
 // CONSTRUIR PERFIL ACTIVO
 // ============================================================
 
-function construirPerfilActivo(asignacion: UsuarioAsignacion): PerfilActivo {
-  // Garantizamos acceso seguro a las relaciones anidadas y manejamos alias de Supabase
-  const cargo = asignacion?.cargo ?? (asignacion as any)?.cargos ?? null;
-  const rol = asignacion?.rol ?? (asignacion as any)?.roles ?? null;
-  
-  const departamento = 
-    cargo?.departamento ?? 
-    (cargo as any)?.departamentos ?? 
+function construirPerfilActivo(
+  asignacion: UsuarioAsignacion
+): PerfilActivo {
+  const cargo =
+    asignacion?.cargo ??
+    (asignacion as any)?.cargos ??
     null;
 
-  const area = 
-    departamento?.area ?? 
-    (departamento as any)?.areas ?? 
+  const rol =
+    asignacion?.rol ??
+    (asignacion as any)?.roles ??
+    null;
+
+  const departamento =
+    cargo?.departamento ??
+    (cargo as any)?.departamentos ??
+    null;
+
+  const area =
+    departamento?.area ??
+    (departamento as any)?.areas ??
     null;
 
   return {
@@ -44,6 +52,73 @@ function construirPerfilActivo(asignacion: UsuarioAsignacion): PerfilActivo {
 }
 
 // ============================================================
+// OBTENER ID DE ASIGNACIÓN SELECCIONADA
+// ============================================================
+//
+// El perfil seleccionado se conserva en sessionStorage para
+// el navegador y se valida nuevamente contra las asignaciones
+// reales obtenidas desde la base de datos.
+//
+// IMPORTANTE:
+// sessionStorage NO es una fuente de confianza para seguridad.
+// Solo sirve para recordar la selección del usuario.
+// La API debe volver a validar la asignación.
+//
+
+function obtenerAsignacionSeleccionadaId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    return sessionStorage.getItem(
+      "csnf_perfil_activo"
+    );
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// GUARDAR ID DE ASIGNACIÓN SELECCIONADA
+// ============================================================
+
+export function guardarAsignacionSeleccionada(
+  asignacionId: string
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(
+      "csnf_perfil_activo",
+      asignacionId
+    );
+  } catch {
+    // No hacemos fallar la aplicación por sessionStorage.
+  }
+}
+
+// ============================================================
+// LIMPIAR PERFIL SELECCIONADO
+// ============================================================
+
+export function limpiarAsignacionSeleccionada(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.removeItem(
+      "csnf_perfil_activo"
+    );
+  } catch {
+    // Ignorar errores de storage.
+  }
+}
+
+// ============================================================
 // CONSTRUIR USUARIO PORTAL
 // ============================================================
 
@@ -51,36 +126,106 @@ function construirUsuarioPortal(
   usuarioBase: Usuario,
   asignaciones: UsuarioAsignacion[]
 ): UsuarioPortal {
-  // 1. Buscar perfil predeterminado o tomar la primera asignación activa/disponible
-  const asignacionPrincipal =
-    asignaciones.find((a: any) => a.perfil_predeterminado || a.predeterminado) ??
-    asignaciones[0] ??
+
+  // ----------------------------------------------------------
+  // 1. Determinar asignación activa
+  // ----------------------------------------------------------
+
+  const asignacionSeleccionadaId =
+    obtenerAsignacionSeleccionadaId();
+
+  let asignacionPrincipal: UsuarioAsignacion | null =
     null;
 
-  // 2. Construir el Perfil Activo
-  const perfilActivo = asignacionPrincipal
-    ? construirPerfilActivo(asignacionPrincipal)
-    : null;
+  // Primero intentamos utilizar el perfil seleccionado.
+  if (asignacionSeleccionadaId) {
+    asignacionPrincipal =
+      asignaciones.find(
+        (a) => a.id === asignacionSeleccionadaId
+      ) ?? null;
+  }
 
-  // 3. Extender los datos del usuario con su rol/cargo predeterminado
+  // ----------------------------------------------------------
+  // 2. Si no hay selección:
+  //
+  //    - una sola asignación -> acceso directo
+  //    - varias asignaciones -> predeterminada
+  //      solamente como fallback técnico
+  // ----------------------------------------------------------
+
+  if (!asignacionPrincipal) {
+
+    if (asignaciones.length === 1) {
+
+      asignacionPrincipal =
+        asignaciones[0];
+
+    } else if (asignaciones.length > 1) {
+
+      asignacionPrincipal =
+        asignaciones.find(
+          (a: any) =>
+            a.perfil_predeterminado === true ||
+            a.predeterminado === true
+        ) ??
+        null;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // 3. Construir perfil
+  // ----------------------------------------------------------
+
+  const perfilActivo =
+    asignacionPrincipal
+      ? construirPerfilActivo(asignacionPrincipal)
+      : null;
+
+  // ----------------------------------------------------------
+  // 4. Usuario extendido
+  // ----------------------------------------------------------
+
   const usuario: Usuario = {
     ...usuarioBase,
-    rol: perfilActivo?.rol,
-    cargo: perfilActivo?.cargo,
-    departamento: perfilActivo?.departamento,
-    area: perfilActivo?.area,
+
+    rol:
+      perfilActivo?.rol,
+
+    cargo:
+      perfilActivo?.cargo,
+
+    departamento:
+      perfilActivo?.departamento,
+
+    area:
+      perfilActivo?.area,
   };
 
-  // 4. Retornar la estructura final de UsuarioPortal asegurando compatibilidad con vistas
+  // ----------------------------------------------------------
+  // 5. UsuarioPortal
+  // ----------------------------------------------------------
+
   return {
     usuario,
+
     asignaciones,
+
     perfilActivo,
-    cargo: perfilActivo?.cargo,
-    rol: perfilActivo?.rol,
-    departamento: perfilActivo?.departamento,
-    area: perfilActivo?.area,
+
+    cargo:
+      perfilActivo?.cargo,
+
+    rol:
+      perfilActivo?.rol,
+
+    departamento:
+      perfilActivo?.departamento,
+
+    area:
+      perfilActivo?.area,
+
     permisos: [],
+
     autenticado: true,
   };
 }
@@ -89,78 +234,158 @@ function construirUsuarioPortal(
 // OBTENER USUARIO PORTAL
 // ============================================================
 
-export async function obtenerUsuarioPortal(): Promise<UsuarioPortal | null> {
-  //----------------------------------------------------------
-  // 1. Obtener Usuario Autenticado en Supabase Auth
-  //----------------------------------------------------------
-  const auth = await obtenerUsuarioAuth();
+export async function obtenerUsuarioPortal():
+  Promise<UsuarioPortal | null> {
+
+  // ----------------------------------------------------------
+  // 1. Usuario autenticado
+  // ----------------------------------------------------------
+
+  const auth =
+    await obtenerUsuarioAuth();
 
   if (!auth.success || !auth.data) {
     return null;
   }
 
-  //----------------------------------------------------------
-  // 2. Consultar Usuario y Asignaciones en Base de Datos
-  //----------------------------------------------------------
-  const resultado = await databaseRepository.obtenerUsuarioPortal(
-    auth.data.id
-  );
+  // ----------------------------------------------------------
+  // 2. Usuario en base de datos
+  // ----------------------------------------------------------
 
-  if (resultado.error || !resultado.data) {
-    console.error("Error obteniendo usuario portal:", resultado.error);
+  const resultado =
+    await databaseRepository.obtenerUsuarioPortal(
+      auth.data.id
+    );
+
+  if (
+    resultado.error ||
+    !resultado.data
+  ) {
+
+    console.error(
+      "Error obteniendo usuario portal:",
+      resultado.error
+    );
+
     return null;
   }
 
-  const rawUser = resultado.data.usuario;
+  const rawUser =
+    resultado.data.usuario;
 
-  //----------------------------------------------------------
-  // 3. Mapear Usuario e Información de Catálogos de Forma Robusta
-  //----------------------------------------------------------
-  
-  // Extraemos de forma segura los catálogos ya resueltos en el objeto del repositorio
-  const tipoPersona = rawUser.tipoPersona ?? (rawUser as any).tipos_persona ?? null;
-  const tipoIdentificacion = rawUser.tipoIdentificacion ?? (rawUser as any).tipos_identificacion ?? null;
-  const estadoUsuario = rawUser.estadoUsuario ?? (rawUser as any).estados_usuario ?? null;
+  // ----------------------------------------------------------
+  // 3. Catálogos
+  // ----------------------------------------------------------
 
-  // Determinamos el nombre para mostrar según si es persona natural o jurídica
-  const tipoPersonaCodigo = tipoPersona?.codigo?.toUpperCase() ?? "";
-  const esJuridica = tipoPersonaCodigo === "JUR";
+  const tipoPersona =
+    rawUser.tipoPersona ??
+    (rawUser as any).tipos_persona ??
+    null;
 
-  const nombreMostrado = esJuridica
-    ? (rawUser.razon_social || "Sin razón social")
-    : `${rawUser.nombres ?? ""} ${rawUser.apellidos ?? ""}`.trim() || "Sin nombre";
+  const tipoIdentificacion =
+    rawUser.tipoIdentificacion ??
+    (rawUser as any).tipos_identificacion ??
+    null;
+
+  const estadoUsuario =
+    rawUser.estadoUsuario ??
+    (rawUser as any).estados_usuario ??
+    null;
+
+  // ----------------------------------------------------------
+  // 4. Nombre mostrado
+  // ----------------------------------------------------------
+
+  const tipoPersonaCodigo =
+    tipoPersona?.codigo?.toUpperCase() ?? "";
+
+  const esJuridica =
+    tipoPersonaCodigo === "JUR";
+
+  const nombreMostrado =
+    esJuridica
+
+      ? (
+          rawUser.razon_social ||
+          "Sin razón social"
+        )
+
+      : (
+          `${rawUser.nombres ?? ""} ${
+            rawUser.apellidos ?? ""
+          }`.trim() ||
+          "Sin nombre"
+        );
+
+  // ----------------------------------------------------------
+  // 5. Usuario base
+  // ----------------------------------------------------------
 
   const usuarioBase: Usuario = {
+
     ...rawUser,
-    email: rawUser.email ?? auth.data.email ?? "",
-    nombreCompleto: nombreMostrado,
-    tipoPersona: tipoPersona ?? undefined,
-    tipoIdentificacion: tipoIdentificacion ?? undefined,
-    estadoUsuario: estadoUsuario ?? undefined,
+
+    email:
+      rawUser.email ??
+      auth.data.email ??
+      "",
+
+    nombreCompleto:
+      nombreMostrado,
+
+    tipoPersona:
+      tipoPersona ??
+      undefined,
+
+    tipoIdentificacion:
+      tipoIdentificacion ??
+      undefined,
+
+    estadoUsuario:
+      estadoUsuario ??
+      undefined,
   };
 
-  // Extraer asignaciones (si viene una sola la convertimos en array)
-  const asignacionesRaw = resultado.data.asignaciones;
-  const asignaciones: UsuarioAsignacion[] = asignacionesRaw
-    ? Array.isArray(asignacionesRaw)
-      ? asignacionesRaw
-      : [asignacionesRaw]
-    : [];
+  // ----------------------------------------------------------
+  // 6. Asignaciones
+  // ----------------------------------------------------------
 
-  //----------------------------------------------------------
-  // 4. Construir y retornar UsuarioPortal centralizado
-  //----------------------------------------------------------
-  const usuarioPortal = construirUsuarioPortal(usuarioBase, asignaciones);
+  const asignacionesRaw =
+    resultado.data.asignaciones;
 
-  return usuarioPortal;
+  const asignaciones:
+    UsuarioAsignacion[] =
+
+    asignacionesRaw
+
+      ? Array.isArray(asignacionesRaw)
+
+        ? asignacionesRaw
+
+        : [asignacionesRaw]
+
+      : [];
+
+  // ----------------------------------------------------------
+  // 7. Construir portal
+  // ----------------------------------------------------------
+
+  return construirUsuarioPortal(
+    usuarioBase,
+    asignaciones
+  );
 }
 
 // ============================================================
 // OBTENER ASIGNACIONES
 // ============================================================
 
-export async function obtenerAsignacionesUsuario(): Promise<UsuarioAsignacion[]> {
-  const usuario = await obtenerUsuarioPortal();
+export async function obtenerAsignacionesUsuario():
+  Promise<UsuarioAsignacion[]> {
+
+  const usuario =
+    await obtenerUsuarioPortal();
+
   return usuario?.asignaciones ?? [];
 }
 
@@ -168,8 +393,12 @@ export async function obtenerAsignacionesUsuario(): Promise<UsuarioAsignacion[]>
 // OBTENER PERFIL ACTIVO
 // ============================================================
 
-export async function obtenerPerfilActivo(): Promise<PerfilActivo | null> {
-  const usuario = await obtenerUsuarioPortal();
+export async function obtenerPerfilActivo():
+  Promise<PerfilActivo | null> {
+
+  const usuario =
+    await obtenerUsuarioPortal();
+
   return usuario?.perfilActivo ?? null;
 }
 
@@ -177,8 +406,12 @@ export async function obtenerPerfilActivo(): Promise<PerfilActivo | null> {
 // OBTENER ROL
 // ============================================================
 
-export async function obtenerRolActivo() {
-  const perfil = await obtenerPerfilActivo();
+export async function obtenerRolActivo():
+  Promise<PerfilActivo["rol"] | null> {
+
+  const perfil =
+    await obtenerPerfilActivo();
+
   return perfil?.rol ?? null;
 }
 
@@ -186,8 +419,12 @@ export async function obtenerRolActivo() {
 // OBTENER CARGO
 // ============================================================
 
-export async function obtenerCargoActivo() {
-  const perfil = await obtenerPerfilActivo();
+export async function obtenerCargoActivo():
+  Promise<PerfilActivo["cargo"] | null> {
+
+  const perfil =
+    await obtenerPerfilActivo();
+
   return perfil?.cargo ?? null;
 }
 
@@ -195,8 +432,12 @@ export async function obtenerCargoActivo() {
 // OBTENER DEPARTAMENTO
 // ============================================================
 
-export async function obtenerDepartamentoActivo() {
-  const perfil = await obtenerPerfilActivo();
+export async function obtenerDepartamentoActivo():
+  Promise<PerfilActivo["departamento"] | null> {
+
+  const perfil =
+    await obtenerPerfilActivo();
+
   return perfil?.departamento ?? null;
 }
 
@@ -204,8 +445,12 @@ export async function obtenerDepartamentoActivo() {
 // OBTENER ÁREA
 // ============================================================
 
-export async function obtenerAreaActiva() {
-  const perfil = await obtenerPerfilActivo();
+export async function obtenerAreaActiva():
+  Promise<PerfilActivo["area"] | null> {
+
+  const perfil =
+    await obtenerPerfilActivo();
+
   return perfil?.area ?? null;
 }
 
@@ -213,8 +458,12 @@ export async function obtenerAreaActiva() {
 // OBTENER PERMISOS
 // ============================================================
 
-export async function obtenerPermisos(): Promise<Permiso[]> {
-  const usuario = await obtenerUsuarioPortal();
+export async function obtenerPermisos():
+  Promise<Permiso[]> {
+
+  const usuario =
+    await obtenerUsuarioPortal();
+
   return usuario?.permisos ?? [];
 }
 
@@ -222,17 +471,29 @@ export async function obtenerPermisos(): Promise<Permiso[]> {
 // VALIDAR PERMISO
 // ============================================================
 
-export async function tienePermiso(codigo: string): Promise<boolean> {
-  const permisos = await obtenerPermisos();
-  return permisos.some((permiso) => permiso.codigo === codigo);
+export async function tienePermiso(
+  codigo: string
+): Promise<boolean> {
+
+  const permisos =
+    await obtenerPermisos();
+
+  return permisos.some(
+    (permiso) =>
+      permiso.codigo === codigo
+  );
 }
 
 // ============================================================
 // VALIDAR PERFIL ACTIVO
 // ============================================================
 
-export async function tienePerfilActivo(): Promise<boolean> {
-  const perfil = await obtenerPerfilActivo();
+export async function tienePerfilActivo():
+  Promise<boolean> {
+
+  const perfil =
+    await obtenerPerfilActivo();
+
   return perfil !== null;
 }
 
@@ -240,8 +501,12 @@ export async function tienePerfilActivo(): Promise<boolean> {
 // VALIDAR USUARIO PORTAL
 // ============================================================
 
-export async function existeUsuarioPortal(): Promise<boolean> {
-  const usuario = await obtenerUsuarioPortal();
+export async function existeUsuarioPortal():
+  Promise<boolean> {
+
+  const usuario =
+    await obtenerUsuarioPortal();
+
   return usuario !== null;
 }
 
@@ -249,8 +514,12 @@ export async function existeUsuarioPortal(): Promise<boolean> {
 // OBTENER USUARIO ACTUAL
 // ============================================================
 
-export async function obtenerUsuarioActual(): Promise<Usuario | null> {
-  const usuarioPortal = await obtenerUsuarioPortal();
+export async function obtenerUsuarioActual():
+  Promise<Usuario | null> {
+
+  const usuarioPortal =
+    await obtenerUsuarioPortal();
+
   return usuarioPortal?.usuario ?? null;
 }
 
@@ -258,7 +527,16 @@ export async function obtenerUsuarioActual(): Promise<Usuario | null> {
 // OBTENER PERFIL PRINCIPAL
 // ============================================================
 
-export async function obtenerPerfilPrincipal(): Promise<UsuarioAsignacion | null> {
-  const usuario = await obtenerUsuarioPortal();
-  return usuario?.perfilActivo?.asignacion ?? null;
+export async function obtenerPerfilPrincipal():
+  Promise<UsuarioAsignacion | null> {
+
+  const usuario =
+    await obtenerUsuarioPortal();
+
+  return (
+    usuario
+      ?.perfilActivo
+      ?.asignacion ??
+    null
+  );
 }

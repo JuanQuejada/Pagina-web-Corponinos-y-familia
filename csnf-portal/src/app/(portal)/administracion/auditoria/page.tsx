@@ -1,387 +1,1961 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   Activity,
-  Search,
-  Loader2,
-  User,
-  Calendar,
-  Filter,
-  Download,
-  FileSpreadsheet,
-  Database,
-  CheckCircle,
   AlertCircle,
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Download,
+  Eye,
+  FileText,
+  Filter,
+  Loader2,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  User,
+  X,
+  Database,
+  Globe,
+  Monitor,
+  Hash,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 
-interface LogAuditoria {
+/* ============================================================
+   TIPOS
+============================================================ */
+
+interface UsuarioAuditoria {
+  id: string | null;
+  nombre: string;
+  nombres: string | null;
+  apellidos: string | null;
+  razon_social: string | null;
+  email: string | null;
+}
+
+interface AuditoriaRegistro {
   id: string;
   usuario_id: string | null;
   accion: string;
-  modulo: string;
-  descripcion: string;
-  ip_origen?: string | null;
+  entidad: string | null;
+  entidad_id: string | null;
+  detalles: unknown;
+  ip_address: string | null;
+  user_agent: string | null;
   created_at: string;
-  usuarios?: {
-    nombres?: string | null;
-    apellidos?: string | null;
-    email?: string | null;
-    razon_social?: string | null;
-  };
+
+  usuario: UsuarioAuditoria;
+
+  descripcion: string;
 }
 
-export default function ModuloAuditoriaYExportacionPage() {
-  // Control de Pestañas ("auditoria" o "exportacion")
-  const [pestanaActiva, setPestanaActiva] = useState<"auditoria" | "exportacion">("auditoria");
+interface AuditoriaResponse {
+  ok: boolean;
+  data: AuditoriaRegistro[];
+  total: number;
+  acciones: string[];
+  entidades: string[];
+  error?: string;
+  detalle?: string;
+}
 
-  // Estados de Auditoría
-  const [logs, setLogs] = useState<LogAuditoria[]>([]);
-  const [cargandoLogs, setCargandoLogs] = useState(true);
-  const [busqueda, setBusqueda] = useState("");
-  const [filtroModulo, setFiltroModulo] = useState("TODOS");
+interface Filtros {
+  busqueda: string;
+  accion: string;
+  entidad: string;
+  usuario_id: string;
+  desde: string;
+  hasta: string;
+}
 
-  // Estados de Exportación
-  const [moduloSeleccionado, setModuloSeleccionado] = useState("usuarios");
-  const [exportando, setExportando] = useState(false);
-  const [mensajeExport, setMensajeExport] = useState<{ tipo: "exito" | "error"; texto: string } | null>(null);
+const FILTROS_INICIALES: Filtros = {
+  busqueda: "",
+  accion: "",
+  entidad: "",
+  usuario_id: "",
+  desde: "",
+  hasta: "",
+};
 
-  useEffect(() => {
-    cargarLogs();
-  }, []);
+/* ============================================================
+   UTILIDADES
+============================================================ */
 
-  const cargarLogs = async () => {
-    setCargandoLogs(true);
-    try {
-      const { data: listaLogs, error } = await supabase
-        .from("auditoria_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(100);
+function texto(valor: unknown): string {
+  if (
+    valor === null ||
+    valor === undefined
+  ) {
+    return "";
+  }
 
-      if (error) throw error;
+  return String(valor).trim();
+}
 
-      const { data: listaUsuarios } = await supabase
-        .from("usuarios")
-        .select("id, nombres, apellidos, razon_social, email");
+function normalizarAccion(
+  valor: unknown
+): string {
+  return texto(valor).toUpperCase();
+}
 
-      const mapaUsuarios = new Map((listaUsuarios || []).map((u) => [u.id, u]));
+function normalizarEntidad(
+  valor: unknown
+): string {
+  return texto(valor).toLowerCase();
+}
 
-      const logsCompletos = (listaLogs || []).map((log) => ({
-        ...log,
-        usuarios: log.usuario_id ? mapaUsuarios.get(log.usuario_id) : undefined,
-      }));
+function formatearFecha(
+  valor: string | null | undefined
+): string {
+  if (!valor) {
+    return "-";
+  }
 
-      setLogs(logsCompletos);
-    } catch (err) {
-      console.error("Error al cargar auditoría:", err);
-    } finally {
-      setCargandoLogs(false);
+  const fecha = new Date(valor);
+
+  if (Number.isNaN(fecha.getTime())) {
+    return valor;
+  }
+
+  return new Intl.DateTimeFormat(
+    "es-CO",
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
     }
-  };
+  ).format(fecha);
+}
 
-  // Función para convertir datos JSON a CSV y descargarlos
-  const descargarCSV = (datos: any[], nombreArchivo: string) => {
-    if (!datos || datos.length === 0) {
-      setMensajeExport({ tipo: "error", texto: "No hay registros disponibles para exportar en este módulo." });
-      return;
+function formatearFechaCorta(
+  valor: string | null | undefined
+): string {
+  if (!valor) {
+    return "-";
+  }
+
+  const fecha = new Date(valor);
+
+  if (Number.isNaN(fecha.getTime())) {
+    return valor;
+  }
+
+  return new Intl.DateTimeFormat(
+    "es-CO",
+    {
+      dateStyle: "medium",
     }
+  ).format(fecha);
+}
 
+function obtenerIniciales(
+  nombre: string
+): string {
+  const partes = nombre
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (partes.length === 0) {
+    return "U";
+  }
+
+  return partes
+    .slice(0, 2)
+    .map((parte) =>
+      parte.charAt(0).toUpperCase()
+    )
+    .join("");
+}
+
+function formatearJson(
+  valor: unknown
+): string {
+  if (
+    valor === null ||
+    valor === undefined
+  ) {
+    return "";
+  }
+
+  if (typeof valor === "string") {
     try {
-      // Extraer las cabeceras de las llaves del objeto
-      const keys = Object.keys(datos[0]);
-      const csvContent = [
-        keys.join(","), // Cabecera
-        ...datos.map((row) =>
-          keys.map((key) => {
-            let val = row[key];
-            if (typeof val === "object" && val !== null) val = JSON.stringify(val); // por si hay relaciones anidadas
-            return `"${("" + (val ?? "")).replace(/"/g, '""')}"`;
-          }).join(",")
-        ),
-      ].join("\n");
+      const parseado = JSON.parse(valor);
 
-      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `${nombreArchivo}_${new Date().toISOString().slice(0, 10)}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      setMensajeExport({ tipo: "exito", texto: `Archivo "${nombreArchivo}.csv" exportado con éxito.` });
-    } catch (err) {
-      console.error(err);
-      setMensajeExport({ tipo: "error", texto: "Ocurrió un error al generar el archivo CSV." });
+      return JSON.stringify(
+        parseado,
+        null,
+        2
+      );
+    } catch {
+      return valor;
     }
-  };
+  }
 
-  // Manejador central de exportación según el módulo escogido
-  const ejecutarExportacion = async () => {
-    setExportando(true);
-    setMensajeExport(null);
+  try {
+    return JSON.stringify(
+      valor,
+      null,
+      2
+    );
+  } catch {
+    return String(valor);
+  }
+}
 
-    try {
-      let tablaObjetivo = "";
-      let nombreReporte = "";
+function obtenerEtiquetaAccion(
+  accion: string
+): string {
+  const valor =
+    normalizarAccion(accion);
 
-      switch (moduloSeleccionado) {
-        case "usuarios":
-          tablaObjetivo = "usuarios";
-          nombreReporte = "reporte_usuarios";
-          break;
-        case "roles":
-          tablaObjetivo = "roles";
-          nombreReporte = "reporte_roles";
-          break;
-        case "departamentos":
-          tablaObjetivo = "departamentos";
-          nombreReporte = "reporte_departamentos";
-          break;
-        case "cargos":
-          tablaObjetivo = "cargos";
-          nombreReporte = "reporte_cargos";
-          break;
-        case "auditoria":
-          tablaObjetivo = "auditoria_logs";
-          nombreReporte = "reporte_auditoria_sistema";
-          break;
-        default:
-          throw new Error("Módulo de exportación no válido.");
+  switch (valor) {
+    case "INSERT":
+      return "Creación";
+
+    case "UPDATE":
+      return "Actualización";
+
+    case "DELETE":
+      return "Eliminación";
+
+    case "SELECT":
+      return "Consulta";
+
+    case "LOGIN":
+      return "Inicio de sesión";
+
+    case "LOGOUT":
+      return "Cierre de sesión";
+
+    default:
+      return accion || "Operación";
+  }
+}
+
+function obtenerClaseAccion(
+  accion: string
+): string {
+  switch (
+    normalizarAccion(accion)
+  ) {
+    case "INSERT":
+      return "bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300";
+
+    case "UPDATE":
+      return "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300";
+
+    case "DELETE":
+      return "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300";
+
+    case "LOGIN":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300";
+
+    case "LOGOUT":
+      return "bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300";
+
+    default:
+      return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+  }
+}
+
+function obtenerIconoAccion(
+  accion: string
+) {
+  switch (
+    normalizarAccion(accion)
+  ) {
+    case "INSERT":
+      return "＋";
+
+    case "UPDATE":
+      return "↻";
+
+    case "DELETE":
+      return "×";
+
+    case "LOGIN":
+      return "→";
+
+    case "LOGOUT":
+      return "←";
+
+    default:
+      return "•";
+  }
+}
+
+/* ============================================================
+   COMPONENTE PRINCIPAL
+============================================================ */
+
+export default function AuditoriaPage() {
+  const [registros, setRegistros] =
+    useState<AuditoriaRegistro[]>([]);
+
+  const [acciones, setAcciones] =
+    useState<string[]>([]);
+
+  const [entidades, setEntidades] =
+    useState<string[]>([]);
+
+  const [filtros, setFiltros] =
+    useState<Filtros>(
+      FILTROS_INICIALES
+    );
+
+  const [cargando, setCargando] =
+    useState(true);
+
+  const [actualizando, setActualizando] =
+    useState(false);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const [registroSeleccionado, setRegistroSeleccionado] =
+    useState<AuditoriaRegistro | null>(
+      null
+    );
+
+  const [mostrarFiltros, setMostrarFiltros] =
+    useState(false);
+
+  const [exportando, setExportando] =
+    useState(false);
+
+  const [pagina, setPagina] =
+    useState(1);
+
+  const [expandido, setExpandido] =
+    useState<string | null>(null);
+
+  const REGISTROS_POR_PAGINA = 50;
+
+  /* ==========================================================
+     CONSULTAR API
+  ========================================================== */
+
+  const cargarAuditoria = useCallback(
+    async (
+      mostrarLoader = true
+    ) => {
+      if (mostrarLoader) {
+        setCargando(true);
+      } else {
+        setActualizando(true);
       }
 
-      const { data, error } = await supabase.from(tablaObjetivo as any).select("*");
-      if (error) throw error;
+      setError(null);
 
-      descargarCSV(data || [], nombreReporte);
-    } catch (error: any) {
-      setMensajeExport({ tipo: "error", texto: error.message || "Error al conectar con la base de datos." });
-    } finally {
-      setExportando(false);
-    }
+      try {
+        const params =
+          new URLSearchParams();
+
+        if (filtros.busqueda.trim()) {
+          params.set(
+            "busqueda",
+            filtros.busqueda.trim()
+          );
+        }
+
+        if (filtros.accion) {
+          params.set(
+            "accion",
+            filtros.accion
+          );
+        }
+
+        if (filtros.entidad) {
+          params.set(
+            "entidad",
+            filtros.entidad
+          );
+        }
+
+        if (filtros.usuario_id) {
+          params.set(
+            "usuario_id",
+            filtros.usuario_id
+          );
+        }
+
+        if (filtros.desde) {
+          params.set(
+            "desde",
+            filtros.desde
+          );
+        }
+
+        if (filtros.hasta) {
+          params.set(
+            "hasta",
+            filtros.hasta
+          );
+        }
+
+        params.set(
+          "limite",
+          "1000"
+        );
+
+        const response =
+          await fetch(
+            `/api/auditoria?${params.toString()}`,
+            {
+              method: "GET",
+              cache: "no-store",
+              headers: {
+                Accept:
+                  "application/json",
+              },
+            }
+          );
+
+        /*
+         * No asumimos que el servidor
+         * siempre devolverá JSON.
+         *
+         * Esto evita el clásico:
+         * Unexpected token '<'
+         */
+
+        const contenido =
+          await response.text();
+
+        let data:
+          | AuditoriaResponse
+          | null = null;
+
+        try {
+          data =
+            contenido
+              ? JSON.parse(
+                  contenido
+                )
+              : null;
+        } catch {
+          throw new Error(
+            `El servidor respondió con un formato no válido (${response.status}).`
+          );
+        }
+
+        if (
+          !response.ok ||
+          !data?.ok
+        ) {
+          throw new Error(
+            data?.error ||
+              `No fue posible consultar la auditoría (${response.status}).`
+          );
+        }
+
+        const lista = Array.isArray(
+          data.data
+        )
+          ? data.data
+          : [];
+
+        setRegistros(lista);
+
+        setAcciones(
+          Array.isArray(
+            data.acciones
+          )
+            ? data.acciones
+            : []
+        );
+
+        setEntidades(
+          Array.isArray(
+            data.entidades
+          )
+            ? data.entidades
+            : []
+        );
+
+        setPagina(1);
+      } catch (error: unknown) {
+        console.error(
+          "Error cargando auditoría:",
+          error
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "No fue posible cargar la auditoría."
+        );
+
+        setRegistros([]);
+      } finally {
+        setCargando(false);
+        setActualizando(false);
+      }
+    },
+    [filtros]
+  );
+
+  /* ==========================================================
+     CARGA INICIAL
+  ========================================================== */
+
+  useEffect(() => {
+    void cargarAuditoria(
+      true
+    );
+  }, [cargarAuditoria]);
+
+  /* ==========================================================
+     FILTROS
+  ========================================================== */
+
+  const actualizarFiltro = (
+    campo: keyof Filtros,
+    valor: string
+  ) => {
+    setFiltros(
+      (anterior) => ({
+        ...anterior,
+        [campo]: valor,
+      })
+    );
   };
 
-  const logsFiltrados = logs.filter((l) => {
-    const termino = busqueda.toLowerCase();
-    const usuarioNombre = `${l.usuarios?.nombres || ""} ${l.usuarios?.apellidos || ""} ${l.usuarios?.razon_social || ""} ${l.usuarios?.email || ""}`.toLowerCase();
-    const descripcion = (l.descripcion || "").toLowerCase();
-    const accion = (l.accion || "").toLowerCase();
-    
-    const coincideTexto = usuarioNombre.includes(termino) || descripcion.includes(termino) || accion.includes(termino);
-    const coincideModulo = filtroModulo === "TODOS" || l.modulo === filtroModulo;
-
-    return coincideTexto && coincideModulo;
-  });
-
-  const obtenerColorAccion = (accion: string) => {
-    switch (accion.toUpperCase()) {
-      case "CREAR": return "bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-400";
-      case "EDITAR": return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400";
-      case "ELIMINAR": return "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400";
-      default: return "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-400";
-    }
+  const limpiarFiltros = () => {
+    setFiltros(
+      FILTROS_INICIALES
+    );
+    setPagina(1);
   };
+
+  const filtrosActivos =
+    Object.values(filtros).filter(
+      Boolean
+    ).length;
+
+  /* ==========================================================
+     ESTADÍSTICAS
+  ========================================================== */
+
+  const estadisticas =
+    useMemo(() => {
+      const total =
+        registros.length;
+
+      const creaciones =
+        registros.filter(
+          (registro) =>
+            normalizarAccion(
+              registro.accion
+            ) === "INSERT"
+        ).length;
+
+      const actualizaciones =
+        registros.filter(
+          (registro) =>
+            normalizarAccion(
+              registro.accion
+            ) === "UPDATE"
+        ).length;
+
+      const eliminaciones =
+        registros.filter(
+          (registro) =>
+            normalizarAccion(
+              registro.accion
+            ) === "DELETE"
+        ).length;
+
+      return {
+        total,
+        creaciones,
+        actualizaciones,
+        eliminaciones,
+      };
+    }, [registros]);
+
+  /* ==========================================================
+     PAGINACIÓN
+  ========================================================== */
+
+  const totalPaginas =
+    Math.max(
+      1,
+      Math.ceil(
+        registros.length /
+          REGISTROS_POR_PAGINA
+      )
+    );
+
+  const registrosPagina =
+    useMemo(() => {
+      const inicio =
+        (pagina - 1) *
+        REGISTROS_POR_PAGINA;
+
+      return registros.slice(
+        inicio,
+        inicio +
+          REGISTROS_POR_PAGINA
+      );
+    }, [registros, pagina]);
+
+  useEffect(() => {
+    if (pagina > totalPaginas) {
+      setPagina(totalPaginas);
+    }
+  }, [pagina, totalPaginas]);
+
+  /* ==========================================================
+     EXPORTAR
+  ========================================================== */
+
+  const exportarAuditoria =
+    async () => {
+      if (exportando) return;
+
+      setExportando(true);
+
+      try {
+        const response =
+          await fetch(
+            "/api/auditoria/exportar?modulo=auditoria",
+            {
+              method: "GET",
+              cache: "no-store",
+            }
+          );
+
+        if (!response.ok) {
+          const contenido =
+            await response.text();
+
+          let mensaje =
+            "No fue posible exportar la auditoría.";
+
+          try {
+            const data =
+              JSON.parse(
+                contenido
+              );
+
+            mensaje =
+              data?.error ||
+              mensaje;
+          } catch {
+            // La respuesta no era JSON.
+          }
+
+          throw new Error(
+            mensaje
+          );
+        }
+
+        const blob =
+          await response.blob();
+
+        const url =
+          window.URL.createObjectURL(
+            blob
+          );
+
+        const enlace =
+          document.createElement(
+            "a"
+          );
+
+        enlace.href = url;
+
+        enlace.download =
+          `reporte_auditoria_sistema_${new Date()
+            .toISOString()
+            .slice(0, 10)}.csv`;
+
+        document.body.appendChild(
+          enlace
+        );
+
+        enlace.click();
+
+        enlace.remove();
+
+        window.URL.revokeObjectURL(
+          url
+        );
+      } catch (error: unknown) {
+        console.error(
+          "Error exportando auditoría:",
+          error
+        );
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "No fue posible exportar la auditoría."
+        );
+      } finally {
+        setExportando(false);
+      }
+    };
+
+  /* ==========================================================
+     RENDER
+  ========================================================== */
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm">
+    <div className="min-h-full p-6 max-w-[1600px] mx-auto space-y-6">
+
+      {/* ======================================================
+          ENCABEZADO
+      ======================================================= */}
+
+      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+
         <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <Activity className="h-6 w-6 text-blue-600" />
-            Auditoría y Gestión de Datos
-          </h1>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-            Supervisa las acciones del sistema o extrae respaldos de información en formato estructurado.
-          </p>
-        </div>
-      </div>
-
-      {/* Pestañas de Navegación (Tabs) */}
-      <div className="flex border-b border-gray-200 dark:border-slate-800 gap-6">
-        <button
-          onClick={() => setPestanaActiva("auditoria")}
-          className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
-            pestanaActiva === "auditoria"
-              ? "border-blue-600 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
-          }`}
-        >
-          <Activity className="h-4 w-4" />
-          Registro de Auditoría
-        </button>
-        <button
-          onClick={() => setPestanaActiva("exportacion")}
-          className={`pb-3 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
-            pestanaActiva === "exportacion"
-              ? "border-blue-600 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
-          }`}
-        >
-          <FileSpreadsheet className="h-4 w-4" />
-          Exportación de Módulos
-        </button>
-      </div>
-
-      {/* CONTENIDO PESTAÑA 1: AUDITORÍA */}
-      {pestanaActiva === "auditoria" && (
-        <div className="space-y-6">
-          {/* Filtros y Buscador */}
-          <div className="flex flex-col sm:flex-row items-center gap-3 bg-white dark:bg-slate-900 p-3 rounded-xl border border-gray-100 dark:border-slate-800 shadow-sm">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar por usuario, acción o descripción..."
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-xs bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white rounded-lg border-0 focus:ring-2 focus:ring-blue-500 outline-none"
-              />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40">
+              <ShieldCheck className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <Filter className="h-4 w-4 text-gray-400 shrink-0" />
-              <select
-                value={filtroModulo}
-                onChange={(e) => setFiltroModulo(e.target.value)}
-                className="w-full sm:w-48 px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white rounded-lg border-0 outline-none"
-              >
-                <option value="TODOS">Todos los Módulos</option>
-                <option value="USUARIOS">Usuarios</option>
-                <option value="ROLES">Roles</option>
-                <option value="DOCUMENTOS">Documentos</option>
-                <option value="CONFIGURACION">Configuración</option>
-              </select>
+
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Auditoría del Sistema
+              </h1>
+
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">
+                Registro de operaciones y actividad del sistema
+              </p>
             </div>
           </div>
+        </div>
 
-          {/* Tabla de Logs */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm overflow-hidden">
-            {cargandoLogs ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                <p className="text-xs text-gray-400">Cargando registros de auditoría...</p>
-              </div>
+        <div className="flex flex-wrap items-center gap-2">
+
+          <button
+            type="button"
+            onClick={() =>
+              void cargarAuditoria(
+                false
+              )
+            }
+            disabled={
+              actualizando ||
+              cargando
+            }
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800 transition-all disabled:opacity-50"
+          >
+            {actualizando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-gray-600 dark:text-slate-300">
-                  <thead className="bg-gray-50 dark:bg-slate-800/60 text-gray-400 font-semibold uppercase tracking-wider text-[10px]">
-                    <tr>
-                      <th className="px-6 py-3.5">FECHA Y HORA</th>
-                      <th className="px-6 py-3.5">USUARIO</th>
-                      <th className="px-6 py-3.5">MÓDULO</th>
-                      <th className="px-6 py-3.5">ACCIÓN</th>
-                      <th className="px-6 py-3.5">DESCRIPCIÓN DEL EVENTO</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                    {logsFiltrados.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="text-center py-8 text-gray-400">
-                          No se encontraron registros de auditoría que coincidan con la búsqueda.
-                        </td>
-                      </tr>
-                    ) : (
-                      logsFiltrados.map((l) => {
-                        const nombreUsuario =
-                          l.usuarios?.razon_social ||
-                          `${l.usuarios?.nombres || ""} ${l.usuarios?.apellidos || ""}`.trim() ||
-                          "Sistema / Desconocido";
-
-                        const fechaFormateada = new Date(l.created_at).toLocaleString("es-ES", {
-                          dateStyle: "short",
-                          timeStyle: "medium",
-                        });
-
-                        return (
-                          <tr key={l.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-all">
-                            <td className="px-6 py-4 font-mono text-gray-500 dark:text-slate-400 whitespace-nowrap flex items-center gap-1.5">
-                              <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                              {fechaFormateada}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-gray-900 dark:text-white whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
-                                <User className="h-3.5 w-3.5 text-blue-500" />
-                                {nombreUsuario}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 font-semibold text-gray-700 dark:text-slate-300">
-                              <span className="px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-md text-[11px]">
-                                {l.modulo}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${obtenerColorAccion(l.accion)}`}>
-                                {l.accion}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-gray-600 dark:text-slate-300">
-                              {l.descripcion}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <RefreshCw className="h-4 w-4" />
             )}
-          </div>
-        </div>
-      )}
 
-      {/* CONTENIDO PESTAÑA 2: EXPORTACIÓN DE DATOS */}
-      {pestanaActiva === "exportacion" && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm p-8 max-w-2xl mx-auto space-y-6">
-          <div className="text-center space-y-2">
-            <div className="h-12 w-12 bg-blue-50 dark:bg-blue-950/60 text-blue-600 rounded-2xl mx-auto flex items-center justify-center border border-blue-100 dark:border-blue-900">
-              <Database className="h-6 w-6" />
-            </div>
-            <h2 className="text-base font-bold text-gray-900 dark:text-white">Centro de Exportación de Datos</h2>
-            <p className="text-xs text-gray-500 dark:text-slate-400">
-              Selecciona el módulo del cual deseas extraer la información completa. El archivo se descargará en formato CSV compatible con Excel y Hojas de Cálculo.
+            Actualizar
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              void exportarAuditoria()
+            }
+            disabled={
+              exportando
+            }
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-all disabled:opacity-50 shadow-md shadow-blue-500/20"
+          >
+            {exportando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+
+            Exportar CSV
+          </button>
+        </div>
+      </div>
+
+      {/* ======================================================
+          ERROR
+      ======================================================= */}
+
+      {error && (
+        <div className="flex items-start gap-3 p-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900/60 dark:bg-red-950/30">
+          <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-800 dark:text-red-300">
+              No fue posible completar la operación
+            </p>
+
+            <p className="text-xs text-red-700 dark:text-red-400 mt-1 break-words">
+              {error}
             </p>
           </div>
 
-          {mensajeExport && (
-            <div className={`p-3 rounded-xl flex items-center gap-2 text-xs font-semibold ${
-              mensajeExport.tipo === "exito" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
-            }`}>
-              {mensajeExport.tipo === "exito" ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-              {mensajeExport.texto || mensajeExport.texto}
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() =>
+              setError(null)
+            }
+            className="p-1 text-red-500 hover:text-red-700 dark:hover:text-red-300"
+            title="Cerrar"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
-          <div className="space-y-4">
+      {/* ======================================================
+          ESTADÍSTICAS
+      ======================================================= */}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between">
             <div>
-              <label className="block text-xs font-semibold mb-2 text-gray-700 dark:text-slate-300">
-                Módulo a Exportar:
-              </label>
-              <select
-                value={moduloSeleccionado}
-                onChange={(e) => setModuloSeleccionado(e.target.value)}
-                className="w-full px-4 py-2.5 text-xs bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white rounded-xl border border-gray-200 dark:border-slate-700 outline-none"
-              >
-                <option value="usuarios">Módulo de Usuarios</option>
-                <option value="roles">Módulo de Roles y Permisos</option>
-                <option value="departamentos">Módulo de Departamentos</option>
-                <option value="cargos">Módulo de Cargos</option>
-                <option value="auditoria">Logs de Auditoría (Historial Completo)</option>
-              </select>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Registros
+              </p>
+
+              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                {estadisticas.total}
+              </p>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40">
+              <Activity className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Creaciones
+              </p>
+
+              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                {estadisticas.creaciones}
+              </p>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-green-50 dark:bg-green-950/40">
+              <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Actualizaciones
+              </p>
+
+              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                {estadisticas.actualizaciones}
+              </p>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40">
+              <RefreshCw className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Eliminaciones
+              </p>
+
+              <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
+                {estadisticas.eliminaciones}
+              </p>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40">
+              <Database className="h-5 w-5 text-red-600 dark:text-red-400" />
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ======================================================
+          BÚSQUEDA
+      ======================================================= */}
+
+      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl shadow-sm">
+
+        <div className="p-4">
+
+          <div className="flex flex-col lg:flex-row gap-3">
+
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-3 h-4 w-4 text-gray-400" />
+
+              <input
+                type="text"
+                value={
+                  filtros.busqueda
+                }
+                onChange={(e) =>
+                  actualizarFiltro(
+                    "busqueda",
+                    e.target.value
+                  )
+                }
+                placeholder="Buscar por usuario, acción, entidad, descripción o ID..."
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
 
             <button
-              onClick={ejecutarExportacion}
-              disabled={exportando}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all disabled:opacity-50"
+              type="button"
+              onClick={() =>
+                setMostrarFiltros(
+                  (valor) =>
+                    !valor
+                )
+              }
+              className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all ${
+                mostrarFiltros ||
+                filtrosActivos > 0
+                  ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                  : "border-gray-200 bg-white text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+              }`}
             >
-              {exportando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              <span>{exportando ? "Generando Archivo..." : "Descargar Reporte en CSV"}</span>
+              <Filter className="h-4 w-4" />
+
+              Filtros
+
+              {filtrosActivos >
+                0 && (
+                <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                  {filtrosActivos}
+                </span>
+              )}
+
+              {mostrarFiltros ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
             </button>
+
           </div>
+
+          {mostrarFiltros && (
+            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+
+                {/* ACCIÓN */}
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">
+                    Acción
+                  </label>
+
+                  <select
+                    value={
+                      filtros.accion
+                    }
+                    onChange={(e) =>
+                      actualizarFiltro(
+                        "accion",
+                        e.target.value
+                      )
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">
+                      Todas las acciones
+                    </option>
+
+                    {acciones.map(
+                      (
+                        accion
+                      ) => (
+                        <option
+                          key={accion}
+                          value={accion}
+                        >
+                          {obtenerEtiquetaAccion(
+                            accion
+                          )}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+
+                {/* ENTIDAD */}
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">
+                    Entidad
+                  </label>
+
+                  <select
+                    value={
+                      filtros.entidad
+                    }
+                    onChange={(e) =>
+                      actualizarFiltro(
+                        "entidad",
+                        e.target.value
+                      )
+                    }
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">
+                      Todas las entidades
+                    </option>
+
+                    {entidades.map(
+                      (
+                        entidad
+                      ) => (
+                        <option
+                          key={entidad}
+                          value={entidad}
+                        >
+                          {entidad}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+
+                {/* USUARIO */}
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">
+                    Usuario ID
+                  </label>
+
+                  <input
+                    type="text"
+                    value={
+                      filtros.usuario_id
+                    }
+                    onChange={(e) =>
+                      actualizarFiltro(
+                        "usuario_id",
+                        e.target.value
+                      )
+                    }
+                    placeholder="ID del usuario"
+                    className="w-full px-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* DESDE */}
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">
+                    Desde
+                  </label>
+
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+
+                    <input
+                      type="date"
+                      value={
+                        filtros.desde
+                      }
+                      onChange={(e) =>
+                        actualizarFiltro(
+                          "desde",
+                          e.target.value
+                        )
+                      }
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* HASTA */}
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-slate-400 mb-1.5">
+                    Hasta
+                  </label>
+
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+
+                    <input
+                      type="date"
+                      value={
+                        filtros.hasta
+                      }
+                      onChange={(e) =>
+                        actualizarFiltro(
+                          "hasta",
+                          e.target.value
+                        )
+                      }
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="flex justify-end mt-3">
+
+                <button
+                  type="button"
+                  onClick={
+                    limpiarFiltros
+                  }
+                  disabled={
+                    filtrosActivos ===
+                    0
+                  }
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 disabled:opacity-40"
+                >
+                  <X className="h-3.5 w-3.5" />
+
+                  Limpiar filtros
+                </button>
+
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* ======================================================
+          TABLA
+      ======================================================= */}
+
+      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+
+        {cargando ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+
+            <p className="text-sm text-gray-500 dark:text-slate-400 mt-3">
+              Cargando registros de auditoría...
+            </p>
+          </div>
+        ) : registros.length ===
+          0 ? (
+          <div className="flex flex-col items-center justify-center py-20 px-6">
+            <div className="p-4 rounded-2xl bg-gray-100 dark:bg-slate-800">
+              <Database className="h-8 w-8 text-gray-400 dark:text-slate-500" />
+            </div>
+
+            <h3 className="mt-4 text-sm font-bold text-gray-700 dark:text-slate-300">
+              No se encontraron registros
+            </h3>
+
+            <p className="mt-1 text-xs text-gray-400 text-center max-w-md">
+              No existen registros de auditoría que coincidan con los filtros seleccionados.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left border-collapse">
+
+                <thead>
+                  <tr className="border-b border-gray-100 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-800/40">
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Fecha
+                    </th>
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Usuario
+                    </th>
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Acción
+                    </th>
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Entidad
+                    </th>
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Descripción
+                    </th>
+
+                    <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-500 text-center">
+                      Detalle
+                    </th>
+
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+
+                  {registrosPagina.map(
+                    (
+                      registro
+                    ) => {
+                      const abierto =
+                        expandido ===
+                        registro.id;
+
+                      const usuario =
+                        registro.usuario;
+
+                      const nombreUsuario =
+                        usuario?.nombre ||
+                        "Sistema / Desconocido";
+
+                      return (
+                        <tr
+                          key={
+                            registro.id
+                          }
+                          className="hover:bg-gray-50/50 dark:hover:bg-slate-800/30 transition-colors align-top"
+                        >
+
+                          {/* FECHA */}
+
+                          <td className="px-4 py-4 whitespace-nowrap">
+
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3.5 w-3.5 text-gray-400" />
+
+                              <div>
+                                <p className="text-xs font-semibold text-gray-700 dark:text-slate-300">
+                                  {formatearFechaCorta(
+                                    registro.created_at
+                                  )}
+                                </p>
+
+                                <p className="text-[10px] text-gray-400 mt-0.5">
+                                  {new Date(
+                                    registro.created_at
+                                  ).toLocaleTimeString(
+                                    "es-CO",
+                                    {
+                                      hour:
+                                        "2-digit",
+                                      minute:
+                                        "2-digit",
+                                    }
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                          </td>
+
+                          {/* USUARIO */}
+
+                          <td className="px-4 py-4">
+
+                            <div className="flex items-center gap-2.5 min-w-[190px]">
+
+                              <div className="h-9 w-9 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center text-[10px] font-bold border border-blue-100 dark:border-blue-900 shrink-0">
+                                {obtenerIniciales(
+                                  nombreUsuario
+                                )}
+                              </div>
+
+                              <div className="min-w-0">
+
+                                <p className="text-xs font-bold text-gray-900 dark:text-white truncate max-w-[220px]">
+                                  {nombreUsuario}
+                                </p>
+
+                                {usuario?.email && (
+                                  <p className="text-[10px] text-gray-400 truncate max-w-[220px] mt-0.5">
+                                    {
+                                      usuario.email
+                                    }
+                                  </p>
+                                )}
+
+                              </div>
+
+                            </div>
+
+                          </td>
+
+                          {/* ACCIÓN */}
+
+                          <td className="px-4 py-4 whitespace-nowrap">
+
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${obtenerClaseAccion(
+                                registro.accion
+                              )}`}
+                            >
+                              <span className="text-sm leading-none">
+                                {obtenerIconoAccion(
+                                  registro.accion
+                                )}
+                              </span>
+
+                              {
+                                obtenerEtiquetaAccion(
+                                  registro.accion
+                                )
+                              }
+                            </span>
+
+                            <p className="text-[9px] font-mono text-gray-400 mt-1">
+                              {
+                                registro.accion
+                              }
+                            </p>
+
+                          </td>
+
+                          {/* ENTIDAD */}
+
+                          <td className="px-4 py-4">
+
+                            <div className="min-w-[140px]">
+
+                              <div className="flex items-center gap-1.5">
+
+                                <Database className="h-3.5 w-3.5 text-gray-400" />
+
+                                <span className="text-xs font-semibold text-gray-700 dark:text-slate-300">
+                                  {registro.entidad ||
+                                    "-"}
+                                </span>
+
+                              </div>
+
+                              {registro.entidad_id && (
+                                <div className="flex items-center gap-1 mt-1">
+                                  <Hash className="h-3 w-3 text-gray-400" />
+
+                                  <span className="font-mono text-[9px] text-gray-400 truncate max-w-[150px]">
+                                    {
+                                      registro.entidad_id
+                                    }
+                                  </span>
+                                </div>
+                              )}
+
+                            </div>
+
+                          </td>
+
+                          {/* DESCRIPCIÓN */}
+
+                          <td className="px-4 py-4">
+
+                            <p className="text-xs text-gray-700 dark:text-slate-300 max-w-[500px]">
+                              {
+                                registro.descripcion ||
+                                "Sin descripción."
+                              }
+                            </p>
+
+                          </td>
+
+                          {/* DETALLE */}
+
+                          <td className="px-4 py-4 text-center">
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandido(
+                                  abierto
+                                    ? null
+                                    : registro.id
+                                )
+                              }
+                              title={
+                                abierto
+                                  ? "Ocultar detalle"
+                                  : "Mostrar detalle"
+                              }
+                              className="inline-flex items-center justify-center p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-all"
+                            >
+                              {abierto ? (
+                                <ChevronUp className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+
+                          </td>
+
+                        </tr>
+                      );
+                    }
+                  )}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+            {/* ==================================================
+                DETALLES EXPANDIDOS
+            =================================================== */}
+
+            {expandido && (
+              <div className="border-t border-gray-100 dark:border-slate-800">
+
+                {(() => {
+                  const registro =
+                    registros.find(
+                      (
+                        item
+                      ) =>
+                        item.id ===
+                        expandido
+                    );
+
+                  if (!registro) {
+                    return null;
+                  }
+
+                  return (
+                    <div className="p-5 bg-gray-50/70 dark:bg-slate-950/50">
+
+                      <div className="flex items-center justify-between gap-3 mb-4">
+
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-blue-600" />
+
+                          <h3 className="text-sm font-bold text-gray-800 dark:text-slate-200">
+                            Detalle del registro
+                          </h3>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRegistroSeleccionado(
+                              registro
+                            )
+                          }
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+
+                          Ver completo
+                        </button>
+
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+
+                        <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">
+                            Registro
+                          </p>
+
+                          <p className="font-mono text-[10px] text-gray-700 dark:text-slate-300 mt-1 break-all">
+                            {
+                              registro.id
+                            }
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">
+                            Usuario ID
+                          </p>
+
+                          <p className="font-mono text-[10px] text-gray-700 dark:text-slate-300 mt-1 break-all">
+                            {
+                              registro.usuario_id ||
+                              "-"
+                            }
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">
+                            Entidad ID
+                          </p>
+
+                          <p className="font-mono text-[10px] text-gray-700 dark:text-slate-300 mt-1 break-all">
+                            {
+                              registro.entidad_id ||
+                              "-"
+                            }
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                          <p className="text-[10px] uppercase font-bold text-gray-400">
+                            Fecha y hora
+                          </p>
+
+                          <p className="text-xs text-gray-700 dark:text-slate-300 mt-1">
+                            {formatearFecha(
+                              registro.created_at
+                            )}
+                          </p>
+                        </div>
+
+                      </div>
+
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
+
+                        <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+
+                          <div className="flex items-center gap-2 mb-2">
+                            <Activity className="h-4 w-4 text-blue-600" />
+
+                            <p className="text-xs font-bold text-gray-700 dark:text-slate-300">
+                              Descripción
+                            </p>
+                          </div>
+
+                          <p className="text-xs text-gray-600 dark:text-slate-400 leading-relaxed">
+                            {
+                              registro.descripcion ||
+                              "Sin descripción."
+                            }
+                          </p>
+
+                        </div>
+
+                        <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+
+                          <div className="flex items-center gap-2 mb-2">
+                            <User className="h-4 w-4 text-blue-600" />
+
+                            <p className="text-xs font-bold text-gray-700 dark:text-slate-300">
+                              Usuario
+                            </p>
+                          </div>
+
+                          <p className="text-xs font-bold text-gray-900 dark:text-white">
+                            {
+                              registro.usuario
+                                ?.nombre ||
+                              "Sistema / Desconocido"
+                            }
+                          </p>
+
+                          {registro.usuario
+                            ?.email && (
+                            <p className="text-[10px] text-gray-400 mt-1">
+                              {
+                                registro.usuario.email
+                              }
+                            </p>
+                          )}
+
+                        </div>
+
+                      </div>
+
+                    </div>
+                  );
+                })()}
+
+              </div>
+            )}
+
+            {/* ==================================================
+                PAGINACIÓN
+            =================================================== */}
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 dark:border-slate-800">
+
+              <p className="text-xs text-gray-400">
+                Mostrando{" "}
+                <span className="font-semibold text-gray-600 dark:text-slate-300">
+                  {Math.min(
+                    (pagina - 1) *
+                      REGISTROS_POR_PAGINA +
+                      1,
+                    registros.length
+                  )}
+                </span>{" "}
+                a{" "}
+                <span className="font-semibold text-gray-600 dark:text-slate-300">
+                  {Math.min(
+                    pagina *
+                      REGISTROS_POR_PAGINA,
+                    registros.length
+                  )}
+                </span>{" "}
+                de{" "}
+                <span className="font-semibold text-gray-600 dark:text-slate-300">
+                  {registros.length}
+                </span>{" "}
+                registros
+              </p>
+
+              <div className="flex items-center gap-2">
+
+                <button
+                  type="button"
+                  disabled={
+                    pagina <= 1
+                  }
+                  onClick={() =>
+                    setPagina(
+                      (valor) =>
+                        Math.max(
+                          1,
+                          valor - 1
+                        )
+                    )
+                  }
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-xs font-semibold text-gray-600 dark:text-slate-300 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-slate-800"
+                >
+                  Anterior
+                </button>
+
+                <span className="text-xs text-gray-500 dark:text-slate-400 px-2">
+                  Página{" "}
+                  <strong>
+                    {pagina}
+                  </strong>{" "}
+                  de{" "}
+                  <strong>
+                    {totalPaginas}
+                  </strong>
+                </span>
+
+                <button
+                  type="button"
+                  disabled={
+                    pagina >=
+                    totalPaginas
+                  }
+                  onClick={() =>
+                    setPagina(
+                      (valor) =>
+                        Math.min(
+                          totalPaginas,
+                          valor + 1
+                        )
+                    )
+                  }
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-xs font-semibold text-gray-600 dark:text-slate-300 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-slate-800"
+                >
+                  Siguiente
+                </button>
+
+              </div>
+
+            </div>
+          </>
+        )}
+
+      </div>
+
+      {/* ======================================================
+          MODAL DETALLE COMPLETO
+      ======================================================= */}
+
+      {registroSeleccionado && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+
+          <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 shadow-2xl">
+
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-6 py-4 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-slate-800">
+
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40">
+                  <ShieldCheck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
+
+                <div>
+                  <h2 className="text-base font-bold text-gray-900 dark:text-white">
+                    Registro de auditoría
+                  </h2>
+
+                  <p className="text-[10px] text-gray-400 font-mono">
+                    {
+                      registroSeleccionado.id
+                    }
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setRegistroSeleccionado(
+                    null
+                  )
+                }
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+            </div>
+
+            <div className="p-6 space-y-5">
+
+              {/* RESUMEN */}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                  <p className="text-[10px] uppercase font-bold text-gray-400">
+                    Acción
+                  </p>
+
+                  <div className="mt-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${obtenerClaseAccion(
+                        registroSeleccionado.accion
+                      )}`}
+                    >
+                      {
+                        obtenerEtiquetaAccion(
+                          registroSeleccionado.accion
+                        )
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                  <p className="text-[10px] uppercase font-bold text-gray-400">
+                    Entidad
+                  </p>
+
+                  <p className="text-xs font-semibold text-gray-800 dark:text-slate-200 mt-2">
+                    {
+                      registroSeleccionado.entidad ||
+                      "-"
+                    }
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                  <p className="text-[10px] uppercase font-bold text-gray-400">
+                    Usuario
+                  </p>
+
+                  <p className="text-xs font-semibold text-gray-800 dark:text-slate-200 mt-2">
+                    {
+                      registroSeleccionado.usuario
+                        ?.nombre ||
+                      "Sistema / Desconocido"
+                    }
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                  <p className="text-[10px] uppercase font-bold text-gray-400">
+                    Fecha
+                  </p>
+
+                  <p className="text-xs text-gray-800 dark:text-slate-200 mt-2">
+                    {formatearFecha(
+                      registroSeleccionado.created_at
+                    )}
+                  </p>
+                </div>
+
+              </div>
+
+              {/* DESCRIPCIÓN */}
+
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <FileText className="h-4 w-4 text-blue-600" />
+
+                  <h3 className="text-sm font-bold text-gray-800 dark:text-slate-200">
+                    Descripción
+                  </h3>
+                </div>
+
+                <div className="p-4 rounded-xl bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-800">
+                  <p className="text-sm text-gray-700 dark:text-slate-300 leading-relaxed">
+                    {
+                      registroSeleccionado.descripcion ||
+                      "Sin descripción."
+                    }
+                  </p>
+                </div>
+              </section>
+
+              {/* IDENTIFICADORES */}
+
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <Hash className="h-4 w-4 text-blue-600" />
+
+                  <h3 className="text-sm font-bold text-gray-800 dark:text-slate-200">
+                    Identificadores
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">
+                      ID auditoría
+                    </p>
+
+                    <p className="font-mono text-[10px] break-all text-gray-700 dark:text-slate-300 mt-1">
+                      {
+                        registroSeleccionado.id
+                      }
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">
+                      ID usuario
+                    </p>
+
+                    <p className="font-mono text-[10px] break-all text-gray-700 dark:text-slate-300 mt-1">
+                      {
+                        registroSeleccionado.usuario_id ||
+                        "-"
+                      }
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">
+                      ID entidad
+                    </p>
+
+                    <p className="font-mono text-[10px] break-all text-gray-700 dark:text-slate-300 mt-1">
+                      {
+                        registroSeleccionado.entidad_id ||
+                        "-"
+                      }
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">
+                      Operación
+                    </p>
+
+                    <p className="font-mono text-xs text-gray-700 dark:text-slate-300 mt-1">
+                      {
+                        registroSeleccionado.accion
+                      }
+                    </p>
+                  </div>
+
+                </div>
+              </section>
+
+              {/* CONEXIÓN */}
+
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <Globe className="h-4 w-4 text-blue-600" />
+
+                  <h3 className="text-sm font-bold text-gray-800 dark:text-slate-200">
+                    Información de conexión
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                  <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Globe className="h-4 w-4 text-gray-400" />
+
+                      <p className="text-xs font-bold text-gray-700 dark:text-slate-300">
+                        Dirección IP
+                      </p>
+                    </div>
+
+                    <p className="font-mono text-xs text-gray-600 dark:text-slate-400 mt-2 break-all">
+                      {
+                        registroSeleccionado.ip_address ||
+                        "No registrada"
+                      }
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Monitor className="h-4 w-4 text-gray-400" />
+
+                      <p className="text-xs font-bold text-gray-700 dark:text-slate-300">
+                        User Agent
+                      </p>
+                    </div>
+
+                    <p className="text-[10px] text-gray-600 dark:text-slate-400 mt-2 break-all leading-relaxed">
+                      {
+                        registroSeleccionado.user_agent ||
+                        "No registrado"
+                      }
+                    </p>
+                  </div>
+
+                </div>
+              </section>
+
+              {/* DETALLES JSON */}
+
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <Database className="h-4 w-4 text-blue-600" />
+
+                  <h3 className="text-sm font-bold text-gray-800 dark:text-slate-200">
+                    Detalles técnicos
+                  </h3>
+                </div>
+
+                <pre className="p-4 rounded-xl bg-slate-950 text-slate-200 text-[11px] leading-relaxed overflow-x-auto border border-slate-800">
+                  {formatearJson(
+                    registroSeleccionado.detalles
+                  ) ||
+                    "Sin detalles registrados."}
+                </pre>
+              </section>
+
+            </div>
+
+            <div className="sticky bottom-0 flex justify-end px-6 py-4 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800">
+
+              <button
+                type="button"
+                onClick={() =>
+                  setRegistroSeleccionado(
+                    null
+                  )
+                }
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800"
+              >
+                Cerrar
+              </button>
+
+            </div>
+
+          </div>
+
         </div>
       )}
+
     </div>
   );
 }

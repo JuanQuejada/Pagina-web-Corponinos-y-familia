@@ -2,29 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   VARIABLES GLOBALES
+   ============================================================ */
+
 :root {
-  --primary: #0d9488; /* Teal principal moderno */
+  --primary: #0d9488;
   --primary-foreground: #ffffff;
 }
 
+/* ============================================================
+   ESTRUCTURA GLOBAL DE LA APLICACIÓN
+   ============================================================ */
+
+/*
+ * El documento completo debe ocupar exactamente
+ * el alto disponible de la ventana.
+ */
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * El scroll global de la aplicación queda bloqueado.
+ *
+ * El desplazamiento será controlado por los contenedores
+ * internos que explícitamente tengan overflow-y-auto.
+ */
+
+html {
+  overflow: hidden;
+}
+
+body {
+  overflow: hidden;
+}
+
+/* ============================================================
+   ESTILOS BASE
+   ============================================================ */
+
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased selection:bg-teal-500 selection:text-white;
+    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply selection:bg-teal-500 selection:text-white;
   }
 }
 
-/* Personalización de barras de desplazamiento para que luzcan limpias */
+/* ============================================================
+   BOX SIZING
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   BARRAS DE DESPLAZAMIENTO
+   ============================================================ */
+
+/*
+ * Barras de desplazamiento limpias y discretas.
+ */
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 9999px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* ============================================================
+   DARK MODE
+   ============================================================ */
+
+.dark {
+  color-scheme: dark;
 }

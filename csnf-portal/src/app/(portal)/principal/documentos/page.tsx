@@ -1,707 +1,513 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  FileText,
-  Search,
-  Download,
-  ExternalLink,
-  Plus,
-  Calendar,
-  Loader2,
-  FileCheck,
-  X,
-  User,
-  Clock,
-  Trash2,
-  AlertTriangle,
+  Download, FileText, Loader2, Search, RefreshCw, Plus, X, Upload,
+  Globe2, Workflow, Save, Users,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-interface DocumentoPublico {
+type Rol = { id: string; nombre: string; activo?: boolean };
+type TipoDocumento = { id: string; nombre: string; codigo: string | null };
+type Documento = {
   id: string;
   titulo: string;
-  descripcion: string;
-  codigo_flujo: string;
-  codigo_publicacion: string;
+  descripcion: string | null;
   fecha_documento: string;
-  palabras_clave: string;
-  tipo_documento_nombre: string;
-  drive_url: string;
-  nombre_archivo: string;
-  alcance: string;
-  publicado_por: string;
-  fecha_publicacion: string;
-  creador_id: string | null;
+  codigo_flujo: string | null;
+  codigo_publicacion: string | null;
+  palabras_clave: string | null;
+  observaciones?: string | null;
+  visibilidad?: string | null;
+  estado?: string | null;
+  creador_id?: string | null;
+  tipo_documento?: TipoDocumento | null;
+  origen?: "flujo" | "manual";
+  es_publicacion_manual?: boolean;
+  es_publicacion_flujo?: boolean;
+  version_actual?: {
+    nombre_archivo: string;
+    mime_type: string | null;
+    tamano_bytes?: number | null;
+    drive_url?: string | null;
+  } | null;
+  publicacion_activa?: { codigo_publicacion: string; fecha_publicacion?: string | null } | null;
+};
+
+async function authHeaders() {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token
+    ? { Authorization: `Bearer ${data.session.access_token}` }
+    : {};
 }
 
-export default function DocumentosPublicosPage() {
-  const [documentos, setDocumentos] = useState<DocumentoPublico[]>([]);
-  const [tiposDocumento, setTiposDocumento] = useState<any[]>([]);
-  const [rolesDisponibles, setRolesDisponibles] = useState<any[]>([]);
-  const [cargando, setCargando] = useState(true);
-  const [busqueda, setBusqueda] = useState("");
-  const [filtroTipo, setFiltroTipo] = useState("todos");
-  const [currentPerfilId, setCurrentPerfilId] = useState<string | null>(null);
+function fechaLocal(valor?: string | null) {
+  if (!valor) return "—";
+  return new Date(valor).toLocaleDateString("es-CO");
+}
 
-  // Estados de Modales
-  const [modalAbierto, setModalAbierto] = useState(false);
-  const [guardando, setGuardando] = useState(false);
-  const [archivoSeleccionado, setArchivoSeleccionado] = useState<File | null>(null);
+export default function DocumentosPage() {
+  const [items, setItems] = useState<Documento[]>([]);
+  const [tipos, setTipos] = useState<TipoDocumento[]>([]);
+  const [roles, setRoles] = useState<Rol[]>([]);
+  const [query, setQuery] = useState("");
+  const [tipo, setTipo] = useState("todos");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [modal, setModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [titulo, setTitulo] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [fechaDocumento, setFechaDocumento] = useState(new Date().toISOString().slice(0, 10));
+  const [palabrasClave, setPalabrasClave] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [tipoDocumentoId, setTipoDocumentoId] = useState("");
+  const [archivo, setArchivo] = useState<File | null>(null);
+  const [rolesSeleccionados, setRolesSeleccionados] = useState<string[]>([]);
+  const [todaEntidad, setTodaEntidad] = useState(false);
 
-  // Estado del Modal de Eliminación
-  const [modalEliminarAbierto, setModalEliminarAbierto] = useState(false);
-  const [docAEliminar, setDocAEliminar] = useState<string | null>(null);
-  const [causaEliminacion, setCausaEliminacion] = useState("");
-  const [eliminando, setEliminando] = useState(false);
-
-  const [nuevoDoc, setNuevoDoc] = useState({
-    titulo: "",
-    descripcion: "",
-    tipo_documento_id: "",
-    codigo_flujo: "",
-    palabras_clave: "",
-    fecha_documento: new Date().toISOString().split("T")[0],
-    alcance: "toda_entidad",
-    rolesSeleccionados: [] as string[],
-  });
-
-  useEffect(() => {
-    cargarDatosIniciales();
-  }, []);
-
-  const cargarDatosIniciales = async () => {
-    setCargando(true);
+  async function cargar() {
+    setLoading(true); setError("");
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData.user) {
-        const { data: perfil } = await supabase
-          .from("usuarios")
-          .select("id")
-          .eq("auth_user_id", authData.user.id)
-          .single();
-        if (perfil) setCurrentPerfilId(perfil.id);
-      }
+      const rawHeaders = await authHeaders();
 
-      const { data: tipos } = await supabase
-        .from("tipos_documento")
-        .select("id, nombre, codigo")
-        .order("nombre", { ascending: true });
+      const headers: Record<string, string> = rawHeaders.Authorization
+        ? { Authorization: rawHeaders.Authorization }
+        : {};
+      const [docsRes, tiposRes] = await Promise.all([
+        fetch("/api/documentos/listar", { cache: "no-store", headers }),
+        fetch("/api/tipos-documento", { cache: "no-store" }),
+      ]);
+      const docs = await docsRes.json().catch(() => ({}));
+      const tiposData = await tiposRes.json().catch(() => ({}));
+      if (!docsRes.ok || !docs.success) throw new Error(docs.error || "No fue posible cargar Documentos.");
+      setItems(Array.isArray(docs.documentos) ? docs.documentos : []);
+      setRoles(Array.isArray(docs.roles) ? docs.roles : []);
+      setTipos(Array.isArray(tiposData.tipos) ? tiposData.tipos : []);
+    } catch (e: any) {
+      setItems([]); setError(e?.message || "No fue posible cargar los documentos.");
+    } finally { setLoading(false); }
+  }
 
-      if (tipos) setTiposDocumento(tipos);
+  useEffect(() => { cargar(); }, []);
 
-      const { data: roles } = await supabase
-        .from("roles")
-        .select("id, nombre, codigo")
-        .order("nombre", { ascending: true });
-
-      if (roles) setRolesDisponibles(roles);
-
-      const { data: docsData, error: errDocs } = await supabase
-        .from("documentos")
-        .select(`
-          id,
-          titulo,
-          descripcion,
-          codigo_flujo,
-          codigo_publicacion,
-          fecha_documento,
-          palabras_clave,
-          created_at,
-          creador_id,
-          tipos_documento(nombre),
-          documentos_versiones(drive_url, nombre_archivo, es_version_actual),
-          documentos_destinatarios(acceso_toda_entidad, rol_id),
-          usuarios:creador_id(nombres, apellidos, razon_social)
-        `)
-        .order("created_at", { ascending: false });
-
-      if (errDocs) {
-        console.error("Error al consultar documentos:", errDocs);
-      } else if (docsData) {
-        const formateados: DocumentoPublico[] = docsData.map((d: any) => {
-          const autorObj = d.usuarios;
-          const nombreAutor = autorObj
-            ? `${autorObj.nombres || ""} ${autorObj.apellidos || ""}`.trim() || autorObj.razon_social || "Sistema Corporativo"
-            : "Administración";
-
-          const esTodaEntidad = d.documentos_destinatarios?.[0]?.acceso_toda_entidad;
-
-          const listaVersiones = d.documentos_versiones || [];
-          const versionActual =
-            listaVersiones.find((v: any) => v.es_version_actual && v.drive_url) ||
-            listaVersiones.find((v: any) => v.drive_url) ||
-            listaVersiones[0];
-
-          return {
-            id: d.id,
-            titulo: d.titulo,
-            descripcion: d.descripcion,
-            codigo_flujo: d.codigo_flujo || "N/A",
-            codigo_publicacion: d.codigo_publicacion || "Pendiente",
-            fecha_documento: d.fecha_documento,
-            palabras_clave: d.palabras_clave,
-            tipo_documento_nombre: d.tipos_documento?.nombre || "Documento General",
-            drive_url: versionActual?.drive_url || versionActual?.url || "#",
-            nombre_archivo: versionActual?.nombre_archivo || "Archivo adjunto",
-            alcance: esTodaEntidad ? "Toda la Empresa" : "Multi-roles Autorizados",
-            publicado_por: nombreAutor,
-            fecha_publicacion: new Date(d.created_at).toLocaleString(),
-            creador_id: d.creador_id,
-          };
-        });
-        setDocumentos(formateados);
-      }
-    } catch (err) {
-      console.error("Error inesperado al cargar datos:", err);
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  const handleCheckboxRol = (rolId: string) => {
-    setNuevoDoc((prev) => {
-      const existe = prev.rolesSeleccionados.includes(rolId);
-      return {
-        ...prev,
-        rolesSeleccionados: existe
-          ? prev.rolesSeleccionados.filter((id) => id !== rolId)
-          : [...prev.rolesSeleccionados, rolId],
-      };
+  const filtrados = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    return items.filter((d) => {
+      const texto = `${d.titulo} ${d.descripcion || ""} ${d.codigo_flujo || ""} ${d.codigo_publicacion || ""} ${d.palabras_clave || ""} ${d.tipo_documento?.nombre || ""}`.toLowerCase();
+      return (!q || texto.includes(q)) && (tipo === "todos" || d.tipo_documento?.id === tipo);
     });
-  };
+  }, [items, query, tipo]);
 
-  const handlePublicar = async (e: React.FormEvent) => {
+  function limpiarFormulario() {
+    setTitulo(""); setDescripcion(""); setFechaDocumento(new Date().toISOString().slice(0, 10));
+    setPalabrasClave(""); setObservaciones(""); setTipoDocumentoId(""); setArchivo(null);
+    setRolesSeleccionados([]); setTodaEntidad(false);
+  }
+
+  function abrirCrear() { limpiarFormulario(); setModal(true); }
+  function cerrarCrear() { if (!saving) setModal(false); }
+
+  function toggleRol(id: string) {
+    setRolesSeleccionados((actual) => actual.includes(id) ? actual.filter((x) => x !== id) : [...actual, id]);
+  }
+
+  async function crearDocumento(e: React.FormEvent) {
     e.preventDefault();
-    if (!archivoSeleccionado) {
-      alert("Por favor selecciona un archivo.");
-      return;
+    if (!titulo.trim() || !tipoDocumentoId || !archivo) {
+      alert("Completa título, tipo de documento y archivo."); return;
     }
-
-    setGuardando(true);
-
+    if (!todaEntidad && rolesSeleccionados.length === 0) {
+      alert("Selecciona al menos un rol o marca 'Todos los roles'."); return;
+    }
+    setSaving(true);
     try {
-      const dataForm = new FormData();
-      dataForm.append("file", archivoSeleccionado);
+      const headers = await authHeaders();
+      if (!headers.Authorization) throw new Error("Sesión no válida.");
+      const form = new FormData();
+      form.append("titulo", titulo.trim());
+      form.append("descripcion", descripcion.trim());
+      form.append("fecha_documento", fechaDocumento);
+      form.append("palabras_clave", palabrasClave.trim());
+      form.append("observaciones", observaciones.trim());
+      form.append("tipo_documento_id", tipoDocumentoId);
+      form.append("archivo", archivo);
+      form.append("roles", JSON.stringify(rolesSeleccionados));
+      form.append("acceso_toda_entidad", String(todaEntidad));
+      const res = await fetch("/api/documentos/crear", { method: "POST", headers, body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "No fue posible crear el documento.");
+      alert(data.message || "Documento publicado correctamente.");
+      cerrarCrear(); await cargar();
+    } catch (e: any) { alert(e?.message || "Error creando el documento."); }
+    finally { setSaving(false); }
+  }
 
-      const resApi = await fetch("/api/upload-drive", {
-        method: "POST",
-        body: dataForm,
-      });
+  async function descargar(id: string) {
+    const rawHeaders = await authHeaders();
 
-      const resultadoDrive = await resApi.json();
-      if (!resultadoDrive.success) {
-        throw new Error(resultadoDrive.error || "Error al subir a Google Drive");
-      }
-
-      const urlDriveReal = resultadoDrive.webViewLink || resultadoDrive.url;
-
-      const tipoSeleccionado = tiposDocumento.find((t) => t.id === nuevoDoc.tipo_documento_id);
-      const prefijoTipo = tipoSeleccionado?.codigo || "DOC";
-
-      const { count } = await supabase
-        .from("documentos")
-        .select("*", { count: "exact", head: true })
-        .eq("tipo_documento_id", nuevoDoc.tipo_documento_id);
-
-      const siguienteNumero = (count || 0) + 1;
-      const numeroFormateado = String(siguienteNumero).padStart(3, "0");
-      const anioActual = new Date().getFullYear();
-      const codigoPub = `PB-${prefijoTipo.toUpperCase()}-${anioActual}-${numeroFormateado}`;
-
-      const creadorUuid = currentPerfilId ?? "";
-
-      const { data: docCreado, error: errorDoc } = await supabase
-        .from("documentos")
-        .insert([
-          {
-            titulo: nuevoDoc.titulo,
-            descripcion: nuevoDoc.descripcion,
-            tipo_documento_id: nuevoDoc.tipo_documento_id,
-            codigo_flujo: nuevoDoc.codigo_flujo || null,
-            codigo_publicacion: codigoPub,
-            fecha_documento: nuevoDoc.fecha_documento,
-            palabras_clave: nuevoDoc.palabras_clave,
-            requiere_publicacion: true,
-            creador_id: creadorUuid,
-            estado_documento_id: "3bcfc838-cf94-48a6-993e-d8eff31cbc90",
-          },
-        ])
-        .select()
-        .single();
-
-      if (errorDoc) throw errorDoc;
-
-      if (docCreado) {
-        const { error: errorVersion } = await supabase.from("documentos_versiones").insert([
-          {
-            documento_id: docCreado.id,
-            numero_version: 1,
-            es_version_actual: true,
-            nombre_archivo: archivoSeleccionado.name,
-            mime_type: archivoSeleccionado.type,
-            tamano_bytes: archivoSeleccionado.size,
-            drive_url: urlDriveReal,
-            usuario_carga_id: creadorUuid,
-          },
-        ]);
-
-        if (errorVersion) {
-          console.error("Error al registrar versión:", errorVersion);
-          alert("Error al registrar la versión en la base de datos: " + errorVersion.message);
-          return;
-        }
-
-        if (nuevoDoc.alcance === "toda_entidad") {
-          await supabase.from("documentos_destinatarios").insert([
-            {
-              documento_id: docCreado.id,
-              acceso_toda_entidad: true,
-            },
-          ]);
-        } else {
-          const registrosRoles = nuevoDoc.rolesSeleccionados.map((rId) => ({
-            documento_id: docCreado.id,
-            acceso_toda_entidad: false,
-            rol_id: rId,
-          }));
-          await supabase.from("documentos_destinatarios").insert(registrosRoles);
-        }
-
-        const fechaActualISO = new Date().toISOString();
-
-        await supabase.from("documentos_publicaciones").insert([
-          {
-            documento_id: docCreado.id,
-            codigo_publicacion: codigoPub,
-            publicada: true,
-            publicada_por: creadorUuid,
-            fecha_inicio: fechaActualISO,
-            fecha_publicacion: fechaActualISO,
-          },
-        ]);
-      }
-
-      setModalAbierto(false);
-      setArchivoSeleccionado(null);
-      setNuevoDoc({
-        titulo: "",
-        descripcion: "",
-        tipo_documento_id: "",
-        codigo_flujo: "",
-        palabras_clave: "",
-        fecha_documento: new Date().toISOString().split("T")[0],
-        alcance: "toda_entidad",
-        rolesSeleccionados: [],
-      });
-      cargarDatosIniciales();
-    } catch (err: any) {
-      console.error("Error al publicar:", err);
-      alert("Error al guardar: " + (err.message || "Desconocido"));
-    } finally {
-      setGuardando(false);
-    }
-  };
-
-  const confirmarEliminacion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!docAEliminar || !causaEliminacion.trim()) {
-      alert("Debe especificar la causa de la eliminación.");
-      return;
-    }
-
-    setEliminando(true);
-    try {
-      const { error } = await supabase
-        .from("documentos")
-        .delete()
-        .eq("id", docAEliminar);
-
-      if (error) throw error;
-
-      setModalEliminarAbierto(false);
-      setDocAEliminar(null);
-      setCausaEliminacion("");
-      cargarDatosIniciales();
-    } catch (err: any) {
-      console.error("Error al eliminar documento:", err);
-      alert("No se pudo eliminar el documento: " + (err.message || "Error"));
-    } finally {
-      setEliminando(false);
-    }
-  };
-
-  const documentosFiltrados = documentos.filter((doc) => {
-    const coincideTexto =
-      doc.titulo.toLowerCase().includes(busqueda.toLowerCase()) ||
-      doc.codigo_publicacion.toLowerCase().includes(busqueda.toLowerCase()) ||
-      doc.palabras_clave?.toLowerCase().includes(busqueda.toLowerCase());
-
-    const coincideTipo = filtroTipo === "todos" || doc.tipo_documento_nombre === filtroTipo;
-
-    return coincideTexto && coincideTipo;
-  });
+    const headers: Record<string, string> =
+      rawHeaders.Authorization
+        ? { Authorization: rawHeaders.Authorization }
+        : {};
+    const res = await fetch(`/api/documentos/archivo?id=${encodeURIComponent(id)}`, { headers, cache: "no-store" });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); alert(data.error || "No fue posible descargar el documento."); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = "documento"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <FileText className="h-6 w-6 text-blue-600" />
-            Documentos Públicos y Oficiales
-          </h1>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-            Repositorio con integración segura a Google Drive API, multi-roles y trazabilidad completa.
-          </p>
+    <main className="mx-auto max-w-7xl space-y-6 p-6">
+      <header className="rounded-2xl border bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="flex items-center gap-2 text-xl font-bold"><FileText className="h-6 w-6" /> Documentos</h1>
+            <p className="mt-1 text-xs text-slate-500">Publicaciones provenientes de flujos de aprobación y publicaciones manuales.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={cargar} className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold dark:bg-slate-800"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> Actualizar</button>
+            <button onClick={abrirCrear} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white"><Plus className="mr-1 inline h-4 w-4" /> Nueva publicación</button>
+          </div>
         </div>
-        <button
-          onClick={() => setModalAbierto(true)}
-          className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-md transition-all shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Publicar Documento</span>
-        </button>
-      </div>
+      </header>
 
-      {/* Filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 relative">
-          <Search className="absolute left-3.5 top-3 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Buscar por título, código o palabras clave..."
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 text-xs bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 outline-none shadow-sm"
-          />
-        </div>
-        <div>
-          <select
-            value={filtroTipo}
-            onChange={(e) => setFiltroTipo(e.target.value)}
-            className="w-full px-3 py-2.5 text-xs bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 outline-none shadow-sm font-medium"
-          >
-            <option value="todos">Todos los Tipos de Documento</option>
-            {tiposDocumento.map((t) => (
-              <option key={t.id} value={t.nombre}>
-                {t.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <section className="grid gap-3 md:grid-cols-[1fr_280px]">
+        <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por título, descripción, código o palabras clave..." className="w-full rounded-xl border bg-white py-2.5 pl-10 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900" /></div>
+        <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="rounded-xl border bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-900"><option value="todos">Todos los tipos</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+      </section>
 
-      {/* Listado */}
-      {cargando ? (
-        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          <p className="text-xs text-gray-400">Cargando documentos...</p>
-        </div>
-      ) : documentosFiltrados.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 p-12 text-center space-y-3 shadow-sm">
-          <FileText className="h-10 w-10 text-gray-300 mx-auto" />
-          <h3 className="text-xs font-bold text-gray-800 dark:text-slate-200">No se encontraron documentos</h3>
-          <p className="text-[11px] text-gray-400">No hay registros públicos disponibles.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {documentosFiltrados.map((doc) => {
-            const puedeBorrar = currentPerfilId && doc.creador_id === currentPerfilId;
+      {error && <div className="rounded-xl bg-red-50 p-4 text-xs text-red-700">{error}</div>}
+      {loading ? <div className="flex justify-center py-20"><Loader2 className="animate-spin" /></div> : (
+        <section className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {filtrados.map((d) => {
+            const manual = d.es_publicacion_manual ?? !d.codigo_flujo;
+            return <article key={d.id} className={`rounded-2xl border p-5 shadow-sm ${manual ? "border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/20" : "border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/20"}`}>
+              <div className="flex items-center justify-between gap-2"><span className={`rounded-lg px-2 py-1 text-[10px] font-bold ${manual ? "bg-blue-600 text-white" : "bg-emerald-600 text-white"}`}>{manual ? "PUBLICACIÓN MANUAL" : "PUBLICADO DESDE FLUJO"}</span>{manual ? <Globe2 className="h-4 w-4 text-blue-600" /> : <Workflow className="h-4 w-4 text-emerald-600" />}</div>
+              <span className="mt-3 inline-block rounded-lg bg-white/80 px-2 py-1 text-[10px] font-bold text-slate-700 dark:bg-slate-900/70 dark:text-slate-200">{d.tipo_documento?.nombre || "Documento"}</span>
+              <h2 className="mt-3 line-clamp-2 text-sm font-bold">{d.titulo}</h2>
+              <p className="mt-1 line-clamp-3 text-xs text-slate-600 dark:text-slate-400">{d.descripcion || "Sin descripción."}</p>
+              <div className="mt-4 space-y-1 rounded-xl bg-white/80 p-3 text-[10px] dark:bg-slate-900/70"><div className="flex justify-between gap-3"><span>Código publicación</span><b>{d.codigo_publicacion || "—"}</b></div><div className="flex justify-between gap-3"><span>Código flujo</span><span>{d.codigo_flujo || "Manual"}</span></div><div className="flex justify-between gap-3"><span>Fecha</span><span>{fechaLocal(d.fecha_documento)}</span></div><div className="flex justify-between gap-3"><span>Archivo</span><span className="truncate">{d.version_actual?.nombre_archivo || "—"}</span></div></div>
+              <button onClick={() => descargar(d.id)} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-white ${manual ? "bg-blue-600 hover:bg-blue-700" : "bg-emerald-600 hover:bg-emerald-700"}`}><Download className="h-4 w-4" /> Descargar</button>
+            </article>;
+          })}
+        </section>
+      )}
+      {!loading && filtrados.length === 0 && <div className="rounded-2xl border bg-white p-12 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">No se encontraron documentos visibles para tu usuario.</div>}
 
-            return (
-              <div
-                key={doc.id}
-                className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4 hover:shadow-md transition-all relative"
-              >
-                {/* Botón de eliminación exclusivo para el creador */}
-                {puedeBorrar && (
-                  <button
-                    onClick={() => {
-                      setDocAEliminar(doc.id);
-                      setModalEliminarAbierto(true);
-                    }}
-                    title="Eliminar documento"
-                    className="absolute top-4 right-4 p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-all"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
 
-                <div className="space-y-3 pr-8">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 text-blue-600 text-[10px] font-bold rounded-lg border border-blue-100 dark:border-blue-900">
-                      {doc.tipo_documento_nombre}
-                    </span>
-                    <span className="text-[10px] font-mono text-gray-400 flex items-center gap-1">
-                      <Calendar className="h-3 w-3" /> {doc.fecha_documento}
-                    </span>
+            {/* Encabezado */}
+            <div className="border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-indigo-50 px-6 py-5 dark:border-slate-800 dark:from-blue-950/40 dark:via-slate-900 dark:to-indigo-950/30">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
+                    <FileText className="h-5 w-5" />
                   </div>
-
                   <div>
-                    <h3 className="text-xs font-bold text-gray-900 dark:text-white line-clamp-2">
-                      {doc.titulo}
-                    </h3>
-                    <p className="text-[11px] text-gray-500 dark:text-slate-400 line-clamp-2 mt-1">
-                      {doc.descripcion || "Sin descripción."}
+                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                      Nueva publicación manual
+                    </h2>
+                    <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Registra y publica un documento directamente en el módulo Documentos.
+                      Completa la información para facilitar su identificación, búsqueda y control de acceso.
                     </p>
                   </div>
-
-                  <div className="p-3 bg-gray-50 dark:bg-slate-800/60 rounded-xl space-y-1 font-mono text-[10px]">
-                    <div className="flex justify-between text-gray-600 dark:text-slate-300">
-                      <span className="font-semibold text-gray-400">Publicación:</span>
-                      <span className="font-bold text-blue-600">{doc.codigo_publicacion}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-600 dark:text-slate-300">
-                      <span className="font-semibold text-gray-400">Alcance:</span>
-                      <span className="text-emerald-600 font-sans font-medium">{doc.alcance}</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-1 flex flex-col gap-1 text-[10px] text-gray-400 border-t border-gray-100 dark:border-slate-800">
-                    <span className="flex items-center gap-1.5">
-                      <User className="h-3 w-3 text-blue-500" /> Publicado por: <strong className="text-gray-700 dark:text-slate-300">{doc.publicado_por}</strong>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="h-3 w-3 text-indigo-500" /> Fecha y hora: {doc.fecha_publicacion}
-                    </span>
-                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={cerrarCrear}
+                  disabled={saving}
+                  className="rounded-xl p-2 text-slate-400 transition hover:bg-white hover:text-slate-700 disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-white"
+                  aria-label="Cerrar formulario"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-slate-800 gap-2">
-                  <span className="text-[10px] text-gray-500 dark:text-slate-400 truncate max-w-[130px] font-medium" title={doc.nombre_archivo}>
-                    📄 {doc.nombre_archivo}
-                  </span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {doc.drive_url && doc.drive_url !== "#" ? (
-                      <>
-                        <a
-                          href={doc.drive_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 text-gray-700 dark:text-slate-200 text-[11px] font-semibold rounded-lg transition-all"
+            <form onSubmit={crearDocumento} className="flex-1 overflow-y-auto">
+              <div className="space-y-6 p-6">
+
+                {/* Identificación */}
+                <section>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-1 rounded-full bg-blue-600" />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">1. Identificación del documento</h3>
+                  </div>
+
+                  <div className="grid gap-4">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Título del documento <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        value={titulo}
+                        onChange={e => setTitulo(e.target.value)}
+                        placeholder="Ej.: Acta de reunión del Comité Directivo"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        required
+                      />
+                      <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                        Nombre oficial con el que los usuarios identificarán el documento.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Descripción o propósito
+                      </label>
+                      <textarea
+                        value={descripcion}
+                        onChange={e => setDescripcion(e.target.value)}
+                        placeholder="Explique brevemente qué contiene el documento, para qué sirve o en qué contexto debe consultarse."
+                        rows={3}
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                        Esta información ayuda a los usuarios a comprender el contenido sin abrir el archivo.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                          Tipo de documento <span className="text-red-500">*</span>
+                        </label>
+                        <select
+                          value={tipoDocumentoId}
+                          onChange={e => setTipoDocumentoId(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          required
                         >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          <span>Ver</span>
-                        </a>
-                        <a
-                          href={doc.drive_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold rounded-lg shadow-sm transition-all"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          <span>Descargar</span>
-                        </a>
-                      </>
-                    ) : (
-                      <span className="text-[10px] text-red-500 font-medium">Sin archivo en Drive</span>
+                          <option value="">Seleccione un tipo...</option>
+                          {tipos.map(t => (
+                            <option key={t.id} value={t.id}>
+                              {t.nombre}{t.codigo ? ` (${t.codigo})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                          Clasificación documental. También determina el código de publicación generado por el sistema.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                          Fecha del documento <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          value={fechaDocumento}
+                          onChange={e => setFechaDocumento(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          required
+                        />
+                        <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                          Fecha en la que fue elaborado, emitido o formalizado el documento. No corresponde a la fecha de publicación.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 dark:border-slate-700 dark:bg-slate-800/70">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Código de publicación</p>
+                      <p className="mt-1 text-xs text-slate-700 dark:text-slate-200">
+                        Se generará automáticamente al publicar, por ejemplo:
+                        <span className="ml-1 font-bold text-blue-600 dark:text-blue-400">PB-RES-2026-001</span>.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Archivo y metadatos */}
+                <section>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-1 rounded-full bg-indigo-600" />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">2. Archivo y metadatos</h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Documento que será publicado <span className="text-red-500">*</span>
+                      </label>
+                      <label className="group flex cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 p-5 transition hover:border-blue-400 hover:bg-blue-50/50 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-blue-600 dark:hover:bg-blue-950/20">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm dark:bg-slate-900">
+                          <Upload className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-bold text-slate-800 dark:text-slate-100">
+                            {archivo ? archivo.name : "Seleccione el archivo que desea publicar"}
+                          </p>
+                          <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                            El archivo se almacenará en Google Drive dentro de la carpeta de Documentos del portal.
+                          </p>
+                        </div>
+                        <span className="rounded-lg bg-blue-600 px-3 py-2 text-[10px] font-bold text-white">
+                          Examinar
+                        </span>
+                        <input
+                          type="file"
+                          className="hidden"
+                          onChange={e => setArchivo(e.target.files?.[0] || null)}
+                          required
+                        />
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Palabras clave
+                      </label>
+                      <input
+                        value={palabrasClave}
+                        onChange={e => setPalabrasClave(e.target.value)}
+                        placeholder="Ej.: comité, acta, reunión, decisiones, 2026"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                        Separe las palabras por comas. Se utilizarán para facilitar búsquedas posteriores.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Observaciones
+                      </label>
+                      <textarea
+                        value={observaciones}
+                        onChange={e => setObservaciones(e.target.value)}
+                        placeholder="Ingrese información adicional que deba conocer el usuario antes de consultar el documento."
+                        rows={3}
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                        Información complementaria sobre la publicación, restricciones, contexto o instrucciones de consulta.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Visibilidad */}
+                <section>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-1 rounded-full bg-emerald-600" />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">3. Visibilidad y acceso</h3>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40">
+                        <Users className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                          ¿Quién podrá visualizar este documento?
+                        </p>
+                        <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                          Seleccione los roles que tendrán acceso. Si marca "Todos los roles", el documento será visible para todos los roles habilitados por el sistema.
+                        </p>
+                      </div>
+                    </div>
+
+                    <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
+                      <input
+                        type="checkbox"
+                        checked={todaEntidad}
+                        onChange={e => {
+                          setTodaEntidad(e.target.checked);
+                          if (e.target.checked) setRolesSeleccionados([]);
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>
+                        <span className="block text-xs font-bold text-emerald-800 dark:text-emerald-200">Todos los roles</span>
+                        <span className="block text-[10px] text-emerald-700 dark:text-emerald-300">Cualquier usuario con un rol habilitado podrá visualizar la publicación.</span>
+                      </span>
+                    </label>
+
+                    {!todaEntidad && (
+                      <div className="mt-4">
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                          Seleccione uno o varios roles
+                        </p>
+                        {roles.length === 0 ? (
+                          <div className="rounded-xl bg-amber-50 p-3 text-[10px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                            No se encontraron roles disponibles. Verifique la configuración de roles en el sistema.
+                          </div>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {roles.map(r => {
+                              const seleccionado = rolesSeleccionados.includes(r.id);
+                              return (
+                                <label
+                                  key={r.id}
+                                  className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition ${
+                                    seleccionado
+                                      ? "border-blue-500 bg-blue-50 dark:border-blue-700 dark:bg-blue-950/30"
+                                      : "border-slate-200 bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={seleccionado}
+                                    onChange={() => toggleRol(r.id)}
+                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                  />
+                                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{r.nombre}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <p className="mt-2 text-[10px] text-slate-500">
+                          Debe seleccionar al menos un rol cuando no se utilice la opción "Todos los roles".
+                        </p>
+                      </div>
                     )}
                   </div>
+                </section>
+              </div>
+
+              {/* Acciones */}
+              <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+                <p className="hidden text-[10px] leading-4 text-slate-500 sm:block">
+                  <span className="text-red-500">*</span> Campos obligatorios
+                </p>
+                <div className="ml-auto flex gap-2">
+                  <button
+                    type="button"
+                    onClick={cerrarCrear}
+                    disabled={saving}
+                    className="rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200 disabled:opacity-50 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="mr-1.5 inline h-4 w-4 animate-spin" />
+                        Publicando...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="mr-1.5 inline h-4 w-4" />
+                        Crear y publicar
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Modal para Publicar Documento */}
-      {modalAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 dark:border-slate-800 space-y-4 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <FileCheck className="h-4 w-4 text-blue-600" /> Publicar Documento Oficial
-              </h3>
-              <button onClick={() => setModalAbierto(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handlePublicar} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold mb-1">Título del Documento *</label>
-                <input
-                  type="text"
-                  required
-                  value={nuevoDoc.titulo}
-                  onChange={(e) => setNuevoDoc({ ...nuevoDoc, titulo: e.target.value })}
-                  placeholder="Ej. Resolución General 2026"
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">Tipo de Documento *</label>
-                <select
-                  required
-                  value={nuevoDoc.tipo_documento_id}
-                  onChange={(e) => setNuevoDoc({ ...nuevoDoc, tipo_documento_id: e.target.value })}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none font-medium"
-                >
-                  <option value="">Seleccione tipo de documento...</option>
-                  {tiposDocumento.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.nombre} ({t.codigo})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs font-semibold">Cargar Archivo del Documento *</label>
-                <div className="border-2 border-dashed border-gray-200 dark:border-slate-700 rounded-2xl p-4 text-center bg-gray-50/50 dark:bg-slate-800/40">
-                  <input
-                    type="file"
-                    required
-                    onChange={(e) => setArchivoSeleccionado(e.target.files?.[0] || null)}
-                    className="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 cursor-pointer"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-2">
-                    El archivo se enviará de forma segura a Google Drive corporativo a través de la API.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold">Alcance y Destinatarios *</label>
-                <select
-                  value={nuevoDoc.alcance}
-                  onChange={(e) => setNuevoDoc({ ...nuevoDoc, alcance: e.target.value, rolesSeleccionados: [] })}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none font-medium"
-                >
-                  <option value="toda_entidad">Toda la Empresa</option>
-                  <option value="multiroles">Múltiples Roles Específicos</option>
-                </select>
-
-                {nuevoDoc.alcance === "multiroles" && (
-                  <div className="p-3 bg-gray-50 dark:bg-slate-800/60 rounded-xl border border-gray-200 dark:border-slate-700 max-h-36 overflow-y-auto space-y-2">
-                    <p className="text-[10px] font-semibold text-gray-400">Selecciona los roles aplicables:</p>
-                    {rolesDisponibles.map((r) => (
-                      <label key={r.id} className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={nuevoDoc.rolesSeleccionados.includes(r.id)}
-                          onChange={() => handleCheckboxRol(r.id)}
-                          className="rounded text-blue-600"
-                        />
-                        <span>{r.nombre}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Fecha del Documento *</label>
-                  <input
-                    type="date"
-                    required
-                    value={nuevoDoc.fecha_documento}
-                    onChange={(e) => setNuevoDoc({ ...nuevoDoc, fecha_documento: e.target.value })}
-                    className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Palabras Clave</label>
-                  <input
-                    type="text"
-                    value={nuevoDoc.palabras_clave}
-                    onChange={(e) => setNuevoDoc({ ...nuevoDoc, palabras_clave: e.target.value })}
-                    placeholder="resolucion, gerencia"
-                    className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1">Descripción Breve</label>
-                <textarea
-                  rows={2}
-                  value={nuevoDoc.descripcion}
-                  onChange={(e) => setNuevoDoc({ ...nuevoDoc, descripcion: e.target.value })}
-                  placeholder="Detalles clave..."
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none resize-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setModalAbierto(false)}
-                  className="px-4 py-2 bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 font-semibold rounded-xl text-xs"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardando}
-                  className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-md disabled:opacity-50"
-                >
-                  {guardando && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span>Subir y Publicar</span>
-                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      {/* Modal de Eliminación con Causa Obligatoria */}
-      {modalEliminarAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 dark:border-slate-800 space-y-4">
-            <div className="flex items-center gap-3 pb-3 border-b border-gray-100 dark:border-slate-800">
-              <div className="p-2 bg-red-50 text-red-600 rounded-xl">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-gray-900 dark:text-white">Eliminar Documento Oficial</h3>
-                <p className="text-[11px] text-gray-500">Esta acción retirará el documento del portal.</p>
-              </div>
-            </div>
-
-            <form onSubmit={confirmarEliminacion} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-red-600 dark:text-red-400">
-                  Causa u Motivo de Eliminación (Obligatorio) *
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  value={causaEliminacion}
-                  onChange={(e) => setCausaEliminacion(e.target.value)}
-                  placeholder="Explique detalladamente por qué se retira o elimina este documento..."
-                  className="w-full px-3 py-2 text-xs bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 outline-none resize-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setModalEliminarAbierto(false);
-                    setDocAEliminar(null);
-                    setCausaEliminacion("");
-                  }}
-                  className="px-4 py-2 bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 font-semibold rounded-xl text-xs"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={eliminando}
-                  className="flex items-center gap-2 px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl text-xs shadow-md disabled:opacity-50"
-                >
-                  {eliminando && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span>Confirmar Eliminación</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    </main>
+  )
 }
