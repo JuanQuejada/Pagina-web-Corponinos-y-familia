@@ -1,7 +1,12 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
+const nextConfig = {
+  // 1. Remuévelo de experimental
+  experimental: {
+    // otras configuraciones experimentales si las tienes
+  },
+  // 2. Colócalo directamente aquí en el nivel principal
+  outputFileTracingIncludes: {
+    // tus rutas...
+  },
 };
 
 export default nextConfig;

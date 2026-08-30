@@ -151,7 +151,7 @@ export default function Header({ titulo, breadcrumb }: HeaderProps) {
       <div className="flex flex-col">
         <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-teal-500 inline-block"></span>
-          PORTAL Comunidad Corponiños 360
+          PORTAL Corponiños 360
         </h1>
         {breadcrumb && breadcrumb.length > 0 && (
           <nav className="mt-0.5 flex items-center gap-2 text-xs">

@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      anuncios: {
+        Row: {
+          activo: boolean
+          autor_id: string | null
+          contenido: string
+          created_at: string
+          id: string
+          titulo: string
+        }
+        Insert: {
+          activo?: boolean
+          autor_id?: string | null
+          contenido: string
+          created_at?: string
+          id?: string
+          titulo: string
+        }
+        Update: {
+          activo?: boolean
+          autor_id?: string | null
+          contenido?: string
+          created_at?: string
+          id?: string
+          titulo?: string
+        }
+        Relationships: []
+      }
       areas: {
         Row: {
           activo: boolean | null
@@ -90,7 +117,15 @@ export type Database = {
           user_agent?: string | null
           usuario_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "auditoria_usuario_id_fkey"
+            columns: ["usuario_id"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       auditoria_logs: {
         Row: {
@@ -217,6 +252,11 @@ export type Database = {
           carpeta_raiz_drive: string | null
           carpeta_temporal_drive: string | null
           ciudad: string | null
+          color_acento: string | null
+          color_advertencia: string | null
+          color_error: string | null
+          color_exito: string | null
+          color_info: string | null
           color_primario: string | null
           color_secundario: string | null
           correo_institucional: string | null
@@ -224,6 +264,10 @@ export type Database = {
           created_by: string | null
           departamento: string | null
           direccion: string | null
+          encabezado_color: string | null
+          encabezado_estilo: string | null
+          encabezado_fuente: string | null
+          encabezado_tamano: string | null
           favicon: string | null
           formato_fecha: string | null
           id: string
@@ -238,7 +282,9 @@ export type Database = {
           portal_en_mantenimiento: boolean
           sigla: string | null
           sitio_web: string | null
+          subtitulo_portal: string | null
           telefono: string | null
+          tema: string | null
           updated_at: string
           updated_by: string | null
           version_portal: string
@@ -249,6 +295,11 @@ export type Database = {
           carpeta_raiz_drive?: string | null
           carpeta_temporal_drive?: string | null
           ciudad?: string | null
+          color_acento?: string | null
+          color_advertencia?: string | null
+          color_error?: string | null
+          color_exito?: string | null
+          color_info?: string | null
           color_primario?: string | null
           color_secundario?: string | null
           correo_institucional?: string | null
@@ -256,6 +307,10 @@ export type Database = {
           created_by?: string | null
           departamento?: string | null
           direccion?: string | null
+          encabezado_color?: string | null
+          encabezado_estilo?: string | null
+          encabezado_fuente?: string | null
+          encabezado_tamano?: string | null
           favicon?: string | null
           formato_fecha?: string | null
           id?: string
@@ -270,7 +325,9 @@ export type Database = {
           portal_en_mantenimiento?: boolean
           sigla?: string | null
           sitio_web?: string | null
+          subtitulo_portal?: string | null
           telefono?: string | null
+          tema?: string | null
           updated_at?: string
           updated_by?: string | null
           version_portal?: string
@@ -281,6 +338,11 @@ export type Database = {
           carpeta_raiz_drive?: string | null
           carpeta_temporal_drive?: string | null
           ciudad?: string | null
+          color_acento?: string | null
+          color_advertencia?: string | null
+          color_error?: string | null
+          color_exito?: string | null
+          color_info?: string | null
           color_primario?: string | null
           color_secundario?: string | null
           correo_institucional?: string | null
@@ -288,6 +350,10 @@ export type Database = {
           created_by?: string | null
           departamento?: string | null
           direccion?: string | null
+          encabezado_color?: string | null
+          encabezado_estilo?: string | null
+          encabezado_fuente?: string | null
+          encabezado_tamano?: string | null
           favicon?: string | null
           formato_fecha?: string | null
           id?: string
@@ -302,7 +368,9 @@ export type Database = {
           portal_en_mantenimiento?: boolean
           sigla?: string | null
           sitio_web?: string | null
+          subtitulo_portal?: string | null
           telefono?: string | null
+          tema?: string | null
           updated_at?: string
           updated_by?: string | null
           version_portal?: string
@@ -324,6 +392,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      configuracion_general_auditoria: {
+        Row: {
+          accion: string
+          campos_modificados: Json | null
+          configuracion_id: string
+          fecha_cambio: string
+          id: string
+          ip_address: unknown
+          user_agent: string | null
+          usuario_id: string | null
+          valores_anteriores: Json | null
+          valores_nuevos: Json | null
+        }
+        Insert: {
+          accion: string
+          campos_modificados?: Json | null
+          configuracion_id: string
+          fecha_cambio?: string
+          id?: string
+          ip_address?: unknown
+          user_agent?: string | null
+          usuario_id?: string | null
+          valores_anteriores?: Json | null
+          valores_nuevos?: Json | null
+        }
+        Update: {
+          accion?: string
+          campos_modificados?: Json | null
+          configuracion_id?: string
+          fecha_cambio?: string
+          id?: string
+          ip_address?: unknown
+          user_agent?: string | null
+          usuario_id?: string | null
+          valores_anteriores?: Json | null
+          valores_nuevos?: Json | null
+        }
+        Relationships: []
       }
       configuracion_sistema: {
         Row: {
@@ -485,17 +592,21 @@ export type Database = {
           created_at: string
           created_by: string | null
           descripcion: string | null
+          estado: string | null
           estado_documento_id: string | null
           fecha_documento: string
           id: string
           observaciones: string | null
           palabras_clave: string | null
+          publicado_en: string | null
+          publicado_por: string | null
           requiere_flujo: boolean
           requiere_publicacion: boolean
           tipo_documento_id: string
           titulo: string
           updated_at: string
           updated_by: string | null
+          visibilidad: string
         }
         Insert: {
           codigo_flujo?: string | null
@@ -504,17 +615,21 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           descripcion?: string | null
+          estado?: string | null
           estado_documento_id?: string | null
           fecha_documento: string
           id?: string
           observaciones?: string | null
           palabras_clave?: string | null
+          publicado_en?: string | null
+          publicado_por?: string | null
           requiere_flujo?: boolean
           requiere_publicacion?: boolean
           tipo_documento_id: string
           titulo: string
           updated_at?: string
           updated_by?: string | null
+          visibilidad?: string
         }
         Update: {
           codigo_flujo?: string | null
@@ -523,19 +638,30 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           descripcion?: string | null
+          estado?: string | null
           estado_documento_id?: string | null
           fecha_documento?: string
           id?: string
           observaciones?: string | null
           palabras_clave?: string | null
+          publicado_en?: string | null
+          publicado_por?: string | null
           requiere_flujo?: boolean
           requiere_publicacion?: boolean
           tipo_documento_id?: string
           titulo?: string
           updated_at?: string
           updated_by?: string | null
+          visibilidad?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "documentos_publicado_por_fkey"
+            columns: ["publicado_por"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fk_documento_creador"
             columns: ["creador_id"]
@@ -831,8 +957,9 @@ export type Database = {
           consecutivo_repositorio_privado: string | null
           created_at: string
           created_by: string | null
+          descripcion: string | null
           destino_final: string | null
-          documento_id: string
+          documento_id: string | null
           estado: string | null
           estado_flujo_id: string
           fecha_cancelacion: string | null
@@ -842,10 +969,13 @@ export type Database = {
           id: string
           iniciado_por: string
           motivo_rechazo: string | null
-          numero_flujo: number
+          numero_flujo: string
           observaciones: string | null
           proposito: string | null
           reiniciado_desde: string | null
+          repositorio_id: string | null
+          tipo_documento_id: string | null
+          titulo: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -854,8 +984,9 @@ export type Database = {
           consecutivo_repositorio_privado?: string | null
           created_at?: string
           created_by?: string | null
+          descripcion?: string | null
           destino_final?: string | null
-          documento_id: string
+          documento_id?: string | null
           estado?: string | null
           estado_flujo_id: string
           fecha_cancelacion?: string | null
@@ -865,10 +996,13 @@ export type Database = {
           id?: string
           iniciado_por: string
           motivo_rechazo?: string | null
-          numero_flujo?: number
+          numero_flujo?: string
           observaciones?: string | null
           proposito?: string | null
           reiniciado_desde?: string | null
+          repositorio_id?: string | null
+          tipo_documento_id?: string | null
+          titulo?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -877,8 +1011,9 @@ export type Database = {
           consecutivo_repositorio_privado?: string | null
           created_at?: string
           created_by?: string | null
+          descripcion?: string | null
           destino_final?: string | null
-          documento_id?: string
+          documento_id?: string | null
           estado?: string | null
           estado_flujo_id?: string
           fecha_cancelacion?: string | null
@@ -888,14 +1023,31 @@ export type Database = {
           id?: string
           iniciado_por?: string
           motivo_rechazo?: string | null
-          numero_flujo?: number
+          numero_flujo?: string
           observaciones?: string | null
           proposito?: string | null
           reiniciado_desde?: string | null
+          repositorio_id?: string | null
+          tipo_documento_id?: string | null
+          titulo?: string | null
           updated_at?: string
           updated_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "documentos_flujos_repositorio_id_fkey"
+            columns: ["repositorio_id"]
+            isOneToOne: false
+            referencedRelation: "repositorios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "documentos_flujos_tipo_documento_id_fkey"
+            columns: ["tipo_documento_id"]
+            isOneToOne: false
+            referencedRelation: "tipos_documento"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fk_flujo_cancelado"
             columns: ["cancelado_por"]
@@ -1412,6 +1564,53 @@ export type Database = {
         }
         Relationships: []
       }
+      flujos_versiones: {
+        Row: {
+          created_at: string
+          es_version_actual: boolean
+          flujo_id: string
+          id: string
+          mime_type: string | null
+          nombre_archivo: string
+          numero_version: number
+          storage_path: string
+          tamano_bytes: number | null
+          usuario_carga_id: string
+        }
+        Insert: {
+          created_at?: string
+          es_version_actual?: boolean
+          flujo_id: string
+          id?: string
+          mime_type?: string | null
+          nombre_archivo: string
+          numero_version?: number
+          storage_path: string
+          tamano_bytes?: number | null
+          usuario_carga_id: string
+        }
+        Update: {
+          created_at?: string
+          es_version_actual?: boolean
+          flujo_id?: string
+          id?: string
+          mime_type?: string | null
+          nombre_archivo?: string
+          numero_version?: number
+          storage_path?: string
+          tamano_bytes?: number | null
+          usuario_carga_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flujos_versiones_flujo_id_fkey"
+            columns: ["flujo_id"]
+            isOneToOne: false
+            referencedRelation: "documentos_flujos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       kanban_columnas: {
         Row: {
           created_at: string
@@ -1705,6 +1904,73 @@ export type Database = {
           },
         ]
       }
+      repositorios: {
+        Row: {
+          activo: boolean | null
+          descripcion: string | null
+          id: string
+          nombre: string
+        }
+        Insert: {
+          activo?: boolean | null
+          descripcion?: string | null
+          id?: string
+          nombre: string
+        }
+        Update: {
+          activo?: boolean | null
+          descripcion?: string | null
+          id?: string
+          nombre?: string
+        }
+        Relationships: []
+      }
+      repositorios_documentos: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          documento_id: string
+          id: string
+          repositorio_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          documento_id: string
+          id?: string
+          repositorio_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          documento_id?: string
+          id?: string
+          repositorio_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "repositorios_documentos_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "usuarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "repositorios_documentos_documento_id_fkey"
+            columns: ["documento_id"]
+            isOneToOne: false
+            referencedRelation: "documentos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "repositorios_documentos_repositorio_id_fkey"
+            columns: ["repositorio_id"]
+            isOneToOne: false
+            referencedRelation: "repositorios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       roles: {
         Row: {
           activo: boolean | null
@@ -1743,6 +2009,39 @@ export type Database = {
           permisos?: Json | null
         }
         Relationships: []
+      }
+      roles_permisos: {
+        Row: {
+          created_at: string
+          permiso_id: string
+          rol_id: string
+        }
+        Insert: {
+          created_at?: string
+          permiso_id: string
+          rol_id: string
+        }
+        Update: {
+          created_at?: string
+          permiso_id?: string
+          rol_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_roles_permisos_permiso"
+            columns: ["permiso_id"]
+            isOneToOne: false
+            referencedRelation: "permisos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_roles_permisos_rol"
+            columns: ["rol_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tipos_documento: {
         Row: {
@@ -2136,7 +2435,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      crear_trigger_auditoria: { Args: { p_tabla: string }; Returns: undefined }
+      generar_codigo_flujo:
+        | { Args: { tipo_doc_id: string }; Returns: string }
+        | { Args: { anio: number; tipo_doc_id: string }; Returns: string }
+      obtener_ip_auditoria: { Args: never; Returns: unknown }
+      obtener_user_agent_auditoria: { Args: never; Returns: string }
+      obtener_usuario_auditoria: { Args: never; Returns: string }
+      sanitizar_datos_auditoria: { Args: { p_data: Json }; Returns: Json }
+      your_function_name: { Args: never; Returns: string }
     }
     Enums: {
       [_ in never]: never
