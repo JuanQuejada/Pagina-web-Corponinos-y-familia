@@ -30,12 +30,14 @@ function errorRespuesta(
 // ============================================================
 // GET /api/organizacion/cargos/[id]/usuarios
 //
-// Obtiene los usuarios que actualmente tienen asignado el cargo
-// mediante usuarios.cargo_id.
+// MULTICARGOS:
+// Los usuarios ya no se obtienen desde usuarios.cargo_id porque
+// esa columna representa únicamente el cargo predeterminado.
+// La fuente de verdad es usuarios_asignaciones.
 //
-// Esta consulta se realiza únicamente cuando se abre el detalle
-// de un cargo, evitando cargar usuarios innecesariamente en la
-// tabla principal de cargos.
+// Se devuelve una fila por asignación activa. Por tanto, si una
+// persona tiene dos asignaciones activas para el mismo cargo con
+// roles diferentes, ambas quedan visibles.
 // ============================================================
 
 export async function GET(
@@ -58,7 +60,7 @@ export async function GET(
 
     const { data: cargo, error: cargoError } = await supabase
       .from("cargos")
-      .select("id, nombre")
+      .select("id, codigo, nombre, activo, departamento_id")
       .eq("id", id)
       .maybeSingle();
 
@@ -83,48 +85,172 @@ export async function GET(
     }
 
     // ----------------------------------------------------------
-    // Obtener usuarios asignados directamente al cargo
+    // Obtener asignaciones activas del cargo
     // ----------------------------------------------------------
 
-    const { data: usuarios, error: usuariosError } = await supabase
-      .from("usuarios")
-      .select(`
-        id,
-        nombres,
-        apellidos,
-        razon_social,
-        email,
-        numero_identificacion,
-        telefono,
-        foto_url,
-        estado_usuario_id
-      `)
-      .eq("cargo_id", id)
-      .order("nombres", { ascending: true, nullsFirst: false })
-      .order("apellidos", { ascending: true, nullsFirst: false })
-      .order("razon_social", { ascending: true, nullsFirst: false });
+    const { data: asignaciones, error: asignacionesError } =
+      await supabase
+        .from("usuarios_asignaciones")
+        .select(`
+          id,
+          usuario_id,
+          cargo_id,
+          rol_id,
+          fecha_inicio,
+          fecha_fin,
+          activo,
+          perfil_predeterminado,
+          rol:roles(
+            id,
+            codigo,
+            nombre,
+            nivel,
+            activo
+          ),
+          cargo:cargos(
+            id,
+            codigo,
+            nombre,
+            departamento_id,
+            activo,
+            departamento:departamentos(
+              id,
+              codigo,
+              nombre,
+              activo,
+              area:areas(
+                id,
+                codigo,
+                nombre,
+                activo
+              )
+            )
+          )
+        `)
+        .eq("cargo_id", id)
+        .eq("activo", true)
+        .order("fecha_inicio", {
+          ascending: true,
+        });
 
-    if (usuariosError) {
+    if (asignacionesError) {
       console.error(
-        "Error obteniendo usuarios del cargo:",
-        usuariosError
+        "Error obteniendo asignaciones del cargo:",
+        asignacionesError
       );
 
       return errorRespuesta(
-        "No se pudieron cargar los usuarios asignados al cargo.",
+        "No se pudieron cargar las asignaciones del cargo.",
         500,
-        usuariosError.message
+        asignacionesError.message
       );
     }
+
+    const asignacionesValidas = (asignaciones || []).filter(
+      (asignacion: any) =>
+        asignacion.activo === true &&
+        asignacion.cargo?.activo !== false &&
+        asignacion.rol?.activo !== false
+    );
+
+    // ----------------------------------------------------------
+    // Obtener usuarios correspondientes
+    // ----------------------------------------------------------
+
+    const usuarioIds = [
+      ...new Set(
+        asignacionesValidas
+          .map((a: any) => a.usuario_id)
+          .filter(Boolean)
+      ),
+    ];
+
+    let usuarios: any[] = [];
+
+    if (usuarioIds.length > 0) {
+      const { data, error: usuariosError } = await supabase
+        .from("usuarios")
+        .select(`
+          id,
+          auth_user_id,
+          nombres,
+          apellidos,
+          razon_social,
+          email,
+          numero_identificacion,
+          telefono,
+          foto_url,
+          estado_usuario_id,
+          estado_usuario:estados_usuario(
+            id,
+            codigo,
+            nombre,
+            activo
+          )
+        `)
+        .in("id", usuarioIds);
+
+      if (usuariosError) {
+        console.error(
+          "Error obteniendo usuarios del cargo:",
+          usuariosError
+        );
+
+        return errorRespuesta(
+          "No se pudieron cargar los usuarios asignados al cargo.",
+          500,
+          usuariosError.message
+        );
+      }
+
+      usuarios = data || [];
+    }
+
+    const usuariosMap = new Map(
+      usuarios.map((usuario) => [usuario.id, usuario])
+    );
+
+    // ----------------------------------------------------------
+    // Combinar usuario + asignación
+    // ----------------------------------------------------------
+
+    const data = asignacionesValidas
+      .map((asignacion: any) => {
+        const usuario = usuariosMap.get(asignacion.usuario_id);
+
+        if (!usuario) return null;
+
+        return {
+          ...usuario,
+          asignacion_id: asignacion.id,
+          asignacion: {
+            id: asignacion.id,
+            usuario_id: asignacion.usuario_id,
+            cargo_id: asignacion.cargo_id,
+            rol_id: asignacion.rol_id,
+            fecha_inicio: asignacion.fecha_inicio,
+            fecha_fin: asignacion.fecha_fin,
+            activo: asignacion.activo,
+            perfil_predeterminado:
+              asignacion.perfil_predeterminado,
+            cargo: asignacion.cargo,
+            rol: asignacion.rol,
+          },
+        };
+      })
+      .filter(Boolean);
 
     return NextResponse.json({
       ok: true,
       cargo: {
         id: cargo.id,
+        codigo: cargo.codigo,
         nombre: cargo.nombre,
+        activo: cargo.activo,
+        departamento_id: cargo.departamento_id,
       },
-      total: usuarios?.length ?? 0,
-      data: usuarios ?? [],
+      total: data.length,
+      data,
     });
   } catch (error: any) {
     console.error(

@@ -13,7 +13,75 @@ import type {
 } from "@/types";
 
 import { obtenerUsuarioAuth } from "@/lib/auth/auth-client";
-import databaseRepository from "@/lib/database/repositories";
+import { supabase } from "@/lib/supabase";
+
+// ============================================================
+// OBTENER DATOS DEL PORTAL CON TODAS LAS ASIGNACIONES
+// ============================================================
+//
+// La fuente de verdad para cargos/roles es usuarios_asignaciones.
+// Esta consulta pasa por un endpoint protegido que valida el
+// token y devuelve todas las asignaciones activas de la persona.
+// ============================================================
+
+async function obtenerDatosPortalCompletos(authUserId: string) {
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+
+  if (sessionError || !sessionData.session?.access_token) {
+    return {
+      data: null,
+      error: sessionError?.message || "No existe una sesión activa.",
+    };
+  }
+
+  const response = await fetch(
+    "/api/auth/asignaciones",
+    {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${sessionData.session.access_token}`,
+      },
+    }
+  );
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || payload?.success !== true) {
+    return {
+      data: null,
+      error: payload?.error || "No fue posible obtener las asignaciones del usuario.",
+    };
+  }
+
+  if (payload?.usuario?.auth_user_id && payload.usuario.auth_user_id !== authUserId) {
+    return {
+      data: null,
+      error: "La sesión autenticada no corresponde al usuario del portal.",
+    };
+  }
+
+  return {
+    data: payload,
+    error: null,
+  };
+}
+
+// ============================================================
+// NORMALIZAR RELACIONES SUPABASE
+// ============================================================
+// Algunas relaciones anidadas pueden llegar como objeto o como
+// arreglo dependiendo de la definición de la relación.
+// El perfil activo siempre necesita una sola entidad.
+
+function relacionUnica<T = any>(valor: T | T[] | null | undefined): T | null {
+  if (Array.isArray(valor)) {
+    return valor[0] ?? null;
+  }
+
+  return valor ?? null;
+}
 
 // ============================================================
 // CONSTRUIR PERFIL ACTIVO
@@ -22,25 +90,31 @@ import databaseRepository from "@/lib/database/repositories";
 function construirPerfilActivo(
   asignacion: UsuarioAsignacion
 ): PerfilActivo {
-  const cargo =
-    asignacion?.cargo ??
-    (asignacion as any)?.cargos ??
-    null;
+  const asignacionRaw = asignacion as any;
 
-  const rol =
-    asignacion?.rol ??
-    (asignacion as any)?.roles ??
-    null;
+  const cargo = relacionUnica<any>(
+    asignacionRaw?.cargo ??
+    asignacionRaw?.cargos ??
+    null
+  );
 
-  const departamento =
+  const rol = relacionUnica<any>(
+    asignacionRaw?.rol ??
+    asignacionRaw?.roles ??
+    null
+  );
+
+  const departamento = relacionUnica<any>(
     cargo?.departamento ??
-    (cargo as any)?.departamentos ??
-    null;
+    cargo?.departamentos ??
+    null
+  );
 
-  const area =
+  const area = relacionUnica<any>(
     departamento?.area ??
-    (departamento as any)?.areas ??
-    null;
+    departamento?.areas ??
+    null
+  );
 
   return {
     asignacion,
@@ -131,6 +205,10 @@ function construirUsuarioPortal(
   // 1. Determinar asignación activa
   // ----------------------------------------------------------
 
+  const asignacionesActivas = asignaciones.filter(
+    (a) => a?.activo === true
+  );
+
   const asignacionSeleccionadaId =
     obtenerAsignacionSeleccionadaId();
 
@@ -138,9 +216,10 @@ function construirUsuarioPortal(
     null;
 
   // Primero intentamos utilizar el perfil seleccionado.
+  // Solo una asignación activa puede convertirse en perfil activo.
   if (asignacionSeleccionadaId) {
     asignacionPrincipal =
-      asignaciones.find(
+      asignacionesActivas.find(
         (a) => a.id === asignacionSeleccionadaId
       ) ?? null;
   }
@@ -155,15 +234,15 @@ function construirUsuarioPortal(
 
   if (!asignacionPrincipal) {
 
-    if (asignaciones.length === 1) {
+    if (asignacionesActivas.length === 1) {
 
       asignacionPrincipal =
-        asignaciones[0];
+        asignacionesActivas[0];
 
-    } else if (asignaciones.length > 1) {
+    } else if (asignacionesActivas.length > 1) {
 
       asignacionPrincipal =
-        asignaciones.find(
+        asignacionesActivas.find(
           (a: any) =>
             a.perfil_predeterminado === true ||
             a.predeterminado === true
@@ -249,11 +328,11 @@ export async function obtenerUsuarioPortal():
   }
 
   // ----------------------------------------------------------
-  // 2. Usuario en base de datos
+  // 2. Usuario + TODAS sus asignaciones
   // ----------------------------------------------------------
 
   const resultado =
-    await databaseRepository.obtenerUsuarioPortal(
+    await obtenerDatosPortalCompletos(
       auth.data.id
     );
 
@@ -356,15 +435,16 @@ export async function obtenerUsuarioPortal():
   const asignaciones:
     UsuarioAsignacion[] =
 
-    asignacionesRaw
-
-      ? Array.isArray(asignacionesRaw)
-
-        ? asignacionesRaw
-
-        : [asignacionesRaw]
-
-      : [];
+    (Array.isArray(asignacionesRaw)
+      ? asignacionesRaw
+      : asignacionesRaw
+        ? [asignacionesRaw]
+        : []
+    ).filter(
+      (asignacion: UsuarioAsignacion) =>
+        asignacion?.activo === true &&
+        Boolean(asignacion?.id)
+    );
 
   // ----------------------------------------------------------
   // 7. Construir portal
