@@ -32,8 +32,9 @@ import type {
   UsuarioAsignacion,
 } from "@/types";
 
+import { supabase } from "@/lib/supabase";
+
 import {
-  obtenerUsuarioPortal,
   guardarAsignacionSeleccionada,
   limpiarAsignacionSeleccionada,
 } from "@/lib/auth/profile";
@@ -129,8 +130,50 @@ function SeleccionarPerfilContenido() {
       // Obtener usuario autenticado
       // ------------------------------------------------------
 
-      const usuario =
-        await obtenerUsuarioPortal();
+      // ------------------------------------------------------
+      // Las asignaciones se consultan directamente desde el
+      // endpoint autenticado. No usamos el repositorio legacy
+      // aquí porque algunas versiones devolvían una sola
+      // asignación.
+      // ------------------------------------------------------
+
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session?.access_token) {
+        router.replace(
+          `/login?redirect=${encodeURIComponent(destino)}`
+        );
+        return;
+      }
+
+      const response = await fetch(
+        "/api/auth/asignaciones",
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${sessionData.session.access_token}`,
+          },
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.success !== true) {
+        throw new Error(
+          data?.error ||
+            "No fue posible cargar los perfiles de acceso."
+        );
+      }
+
+      const usuario = data.usuario;
+      const asignacionesActivas: UsuarioAsignacion[] =
+        Array.isArray(data.asignaciones)
+          ? data.asignaciones.filter(
+              (a: any) => a?.activo === true && Boolean(a?.id)
+            )
+          : [];
 
       // ------------------------------------------------------
       // Usuario no autenticado
@@ -150,7 +193,7 @@ function SeleccionarPerfilContenido() {
       // ------------------------------------------------------
 
       if (
-        usuario.asignaciones.length === 0
+        asignacionesActivas.length === 0
       ) {
 
         setError(
@@ -167,19 +210,50 @@ function SeleccionarPerfilContenido() {
       // ------------------------------------------------------
 
       if (
-        usuario.asignaciones.length === 1
+        asignacionesActivas.length === 1
       ) {
 
         const asignacion =
-          usuario.asignaciones[0];
+          asignacionesActivas[0];
 
-        guardarAsignacionSeleccionada(
-          asignacion.id
+        const { data: sessionData } =
+          await supabase.auth.getSession();
+
+        const token = sessionData.session?.access_token;
+
+        if (!token) {
+          router.replace(
+            `/login?redirect=${encodeURIComponent(destino)}`
+          );
+          return;
+        }
+
+        const seleccionResponse = await fetch(
+          "/api/auth/seleccionar-perfil",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              asignacion_id: asignacion.id,
+            }),
+          }
         );
 
-        router.replace(
-          destino
-        );
+        const seleccionData = await seleccionResponse.json().catch(() => ({}));
+
+        if (!seleccionResponse.ok || seleccionData?.success !== true) {
+          throw new Error(
+            seleccionData?.error ||
+              "No fue posible establecer el perfil seleccionado."
+          );
+        }
+
+        guardarAsignacionSeleccionada(asignacion.id);
+
+        router.replace(destino);
 
         return;
       }
@@ -189,7 +263,7 @@ function SeleccionarPerfilContenido() {
       // ------------------------------------------------------
 
       setAsignaciones(
-        usuario.asignaciones
+        asignacionesActivas
       );
 
       // ------------------------------------------------------
@@ -200,13 +274,21 @@ function SeleccionarPerfilContenido() {
       // permite cambiar o confirmar el contexto.
       // ------------------------------------------------------
 
-      if (
-        usuario.perfilActivo?.asignacion?.id
-      ) {
-
-        setSeleccionada(
-          usuario.perfilActivo.asignacion.id
+      // Si existe una selección previa válida, la usamos como
+      // selección inicial. La validación definitiva se hace al
+      // confirmar mediante /api/auth/seleccionar-perfil.
+      const asignacionPrevia =
+        asignacionesActivas.find(
+          (a: any) =>
+            a.id === sessionStorage.getItem("csnf_perfil_activo")
         );
+
+      if (asignacionPrevia?.id) {
+        setSeleccionada(asignacionPrevia.id);
+      } else {
+        // Para varias asignaciones no elegimos silenciosamente
+        // una diferente: el usuario debe decidir.
+        setSeleccionada(null);
       }
 
     } catch (err) {
@@ -230,7 +312,7 @@ function SeleccionarPerfilContenido() {
   // CONFIRMAR PERFIL
   // ==========================================================
 
-  function confirmarPerfil() {
+  async function confirmarPerfil() {
 
     // --------------------------------------------------------
     // Validar selección
@@ -273,20 +355,48 @@ function SeleccionarPerfilContenido() {
       setError(null);
 
       // ------------------------------------------------------
-      // Guardar asignación activa
+      // Registrar el perfil activo en servidor
       // ------------------------------------------------------
 
-      guardarAsignacionSeleccionada(
-        asignacion.id
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session?.access_token) {
+        throw new Error("La sesión de autenticación no está disponible.");
+      }
+
+      const seleccionResponse = await fetch(
+        "/api/auth/seleccionar-perfil",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionData.session.access_token}`,
+          },
+          body: JSON.stringify({
+            asignacion_id: asignacion.id,
+          }),
+        }
       );
+
+      const seleccionData = await seleccionResponse.json().catch(() => ({}));
+
+      if (!seleccionResponse.ok || seleccionData?.success !== true) {
+        throw new Error(
+          seleccionData?.error ||
+            "No fue posible establecer el perfil seleccionado."
+        );
+      }
+
+      // sessionStorage sirve para mantener la selección en el cliente;
+      // la cookie validada por el servidor es la fuente para las APIs.
+      guardarAsignacionSeleccionada(asignacion.id);
 
       // ------------------------------------------------------
       // Navegar al destino solicitado
       // ------------------------------------------------------
 
-      router.replace(
-        destino
-      );
+      router.replace(destino);
 
     } catch (err) {
 
@@ -311,8 +421,11 @@ function SeleccionarPerfilContenido() {
     asignacion: UsuarioAsignacion
   ): string {
 
+    const cargo = (asignacion as any)?.cargo;
+    const cargoNormalizado = Array.isArray(cargo) ? cargo[0] : cargo;
+
     return (
-      asignacion.cargo?.nombre ??
+      cargoNormalizado?.nombre ??
       "Cargo no definido"
     );
   }
@@ -325,8 +438,11 @@ function SeleccionarPerfilContenido() {
     asignacion: UsuarioAsignacion
   ): string {
 
+    const rol = (asignacion as any)?.rol;
+    const rolNormalizado = Array.isArray(rol) ? rol[0] : rol;
+
     return (
-      asignacion.rol?.nombre ??
+      rolNormalizado?.nombre ??
       "Rol no definido"
     );
   }
@@ -339,13 +455,14 @@ function SeleccionarPerfilContenido() {
     asignacion: UsuarioAsignacion
   ): string | null {
 
-    return (
-      asignacion
-        .cargo
-        ?.departamento
-        ?.nombre ??
-      null
-    );
+    const cargoRaw = (asignacion as any)?.cargo;
+    const cargo = Array.isArray(cargoRaw) ? cargoRaw[0] : cargoRaw;
+    const departamentoRaw = cargo?.departamento;
+    const departamento = Array.isArray(departamentoRaw)
+      ? departamentoRaw[0]
+      : departamentoRaw;
+
+    return departamento?.nombre ?? null;
   }
 
   // ==========================================================
@@ -356,14 +473,16 @@ function SeleccionarPerfilContenido() {
     asignacion: UsuarioAsignacion
   ): string | null {
 
-    return (
-      asignacion
-        .cargo
-        ?.departamento
-        ?.area
-        ?.nombre ??
-      null
-    );
+    const cargoRaw = (asignacion as any)?.cargo;
+    const cargo = Array.isArray(cargoRaw) ? cargoRaw[0] : cargoRaw;
+    const departamentoRaw = cargo?.departamento;
+    const departamento = Array.isArray(departamentoRaw)
+      ? departamentoRaw[0]
+      : departamentoRaw;
+    const areaRaw = departamento?.area;
+    const area = Array.isArray(areaRaw) ? areaRaw[0] : areaRaw;
+
+    return area?.nombre ?? null;
   }
 
   // ==========================================================

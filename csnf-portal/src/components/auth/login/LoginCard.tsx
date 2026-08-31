@@ -12,70 +12,51 @@ import LoginForm from "./LoginForm";
 
 import { login } from "@/lib/auth/auth-client";
 import { useAuth } from "@/context/AuthContext";
+import { limpiarAsignacionSeleccionada } from "@/lib/auth/profile";
 
 export default function LoginCard() {
-
-  // ==========================================================
-  // Hooks
-  // ==========================================================
-
   const router = useRouter();
-
-  const {
-    actualizarSesion,
-  } = useAuth();
-
-  // ==========================================================
-  // LOGIN
-  // ==========================================================
+  const { actualizarSesion } = useAuth();
 
   async function handleLogin(
     email: string,
     password: string
   ): Promise<void> {
-
-    //----------------------------------------------------------
-    // Autenticar con Supabase
-    //----------------------------------------------------------
-
-    const resultado =
-      await login(
-        email,
-        password
-      );
+    const resultado = await login(email, password);
 
     if (!resultado.success) {
-
       throw new Error(
-
-        resultado.error ??
-
-        "No fue posible iniciar sesión."
-
+        resultado.error ?? "No fue posible iniciar sesión."
       );
-
     }
 
-    //----------------------------------------------------------
-    // Actualizar sesión del Portal
-    //----------------------------------------------------------
+    // ----------------------------------------------------------
+    // NUEVO INICIO DE SESIÓN = NUEVA SELECCIÓN DE PERFIL
+    // ----------------------------------------------------------
+    // Evitamos reutilizar accidentalmente el cargo seleccionado
+    // por otra sesión del mismo navegador.
+    // ----------------------------------------------------------
+    limpiarAsignacionSeleccionada();
 
+    // También eliminamos la selección de servidor anterior.
+    await fetch("/api/auth/seleccionar-perfil", {
+      method: "DELETE",
+      cache: "no-store",
+    }).catch(() => undefined);
+
+    // Cargamos la sesión base de AuthContext.
     await actualizarSesion();
 
-    //----------------------------------------------------------
-    // Redireccionar
-    //----------------------------------------------------------
-
-    router.replace("/dashboard");
-
+    // ----------------------------------------------------------
+    // SIEMPRE pasamos por el selector.
+    //
+    // seleccionar-perfil redirige automáticamente al dashboard
+    // cuando solo existe una asignación activa.
+    // ----------------------------------------------------------
+    router.replace("/seleccionar-perfil?redirect=/dashboard");
   }
 
-  // ==========================================================
-  // COMPONENTE
-  // ==========================================================
-
   return (
-
     <div
       className="
         w-full
@@ -89,11 +70,7 @@ export default function LoginCard() {
         backdrop-blur-xl
       "
     >
-
-      {/* Logo */}
-
       <div className="flex justify-center">
-
         <Image
           src="/images/branding/logo-corporacion.png"
           alt="Corporación Social Niños y Familia"
@@ -101,10 +78,7 @@ export default function LoginCard() {
           height={95}
           priority
         />
-
       </div>
-
-      {/* Título */}
 
       <h1
         className="
@@ -115,9 +89,7 @@ export default function LoginCard() {
           text-slate-800
         "
       >
-
         Bienvenido
-
       </h1>
 
       <p
@@ -128,22 +100,12 @@ export default function LoginCard() {
           text-slate-500
         "
       >
-
         PORTAL CORPORATIVO
-
       </p>
 
-      {/* Formulario */}
-
       <div className="mt-8">
-
-        <LoginForm
-          onLogin={handleLogin}
-        />
-
+        <LoginForm onLogin={handleLogin} />
       </div>
-
-      {/* Footer */}
 
       <div
         className="
@@ -153,7 +115,6 @@ export default function LoginCard() {
           pt-6
         "
       >
-
         <p
           className="
             text-center
@@ -161,9 +122,7 @@ export default function LoginCard() {
             text-slate-500
           "
         >
-
           Portal de Gestión Documental Integral
-
         </p>
 
         <p
@@ -174,15 +133,9 @@ export default function LoginCard() {
             text-slate-400
           "
         >
-
           © {new Date().getFullYear()} Corporación Social Niños y Familia
-
         </p>
-
       </div>
-
     </div>
-
   );
-
 }

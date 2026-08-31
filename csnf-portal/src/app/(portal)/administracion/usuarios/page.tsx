@@ -78,6 +78,22 @@ type Usuario = {
     cargo?: Cargo | null;
     rol?: Rol | null;
   } | null;
+
+  // Todas las asignaciones del usuario. La fuente de verdad para multicargos.
+  asignaciones?: Array<{
+    id: string;
+    usuario_id: string;
+    cargo_id?: string | null;
+    rol_id?: string | null;
+    activo?: boolean;
+    perfil_predeterminado?: boolean;
+    cargo?: (Cargo & {
+      departamento?: (Departamento & {
+        area?: Opcion | null;
+      }) | null;
+    }) | null;
+    rol?: Rol | null;
+  }>;
 };
 
 type Catalogos = {
@@ -3003,65 +3019,152 @@ const rol =
 
           </section>
 
-          {/* ORGANIZACIÓN */}
-
-          <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5">
-
-            <h3 className="mb-4 text-sm font-bold text-slate-900">
-              Organización
-            </h3>
-
-            <div className="space-y-3 text-sm">
-
+          {/* ORGANIZACIÓN / MULTICARGOS */}
+          <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 md:col-span-2">
+            <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs text-slate-400">
-                  Departamento
-                </p>
-
-                <p className="font-medium text-slate-700">
-                  {usuarioVisualizando
-                    .cargo
-                    ?.departamento
-                    ?.nombre ||
-                    catalogos.departamentos.find(
-                      (item) =>
-                        item.id ===
-                        usuarioVisualizando
-                          .cargo
-                          ?.departamento_id
-                    )?.nombre ||
-                    "—"}
+                <h3 className="text-sm font-bold text-slate-900">
+                  Cargos y asignaciones
+                </h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  Cargos asociados actualmente a este usuario.
                 </p>
               </div>
-
-              <div>
-                <p className="text-xs text-slate-400">
-                  Cargo
-                </p>
-
-                <p className="font-medium text-slate-700">
-                  {usuarioVisualizando
-                    .cargo
-                    ?.nombre || "—"}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-slate-400">
-                  Rol
-                </p>
-
-                <p className="font-medium text-slate-700">
-                  {usuarioVisualizando
-                    .asignacion_predeterminada
-                    ?.rol
-                    ?.nombre ||
-                    "Sin rol"}
-                </p>
-              </div>
-
+              {usuarioVisualizando.asignaciones && usuarioVisualizando.asignaciones.length > 0 && (
+                <span className="shrink-0 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                  {usuarioVisualizando.asignaciones.filter((a) => a.activo !== false).length} activo
+                  {usuarioVisualizando.asignaciones.filter((a) => a.activo !== false).length === 1 ? "" : "s"}
+                </span>
+              )}
             </div>
 
+            {(() => {
+              const asignacionesUsuario = Array.isArray(usuarioVisualizando.asignaciones)
+                ? usuarioVisualizando.asignaciones
+                : [];
+
+              // Agrupar por cargo para que un mismo cargo no se repita si tiene más de un rol.
+              const cargosAgrupados = new Map<string, {
+                cargo: any;
+                activo: boolean;
+                predeterminado: boolean;
+                roles: string[];
+              }>();
+
+              for (const asignacion of asignacionesUsuario) {
+                const cargoId = asignacion.cargo_id || asignacion.cargo?.id || asignacion.id;
+                const cargo = asignacion.cargo;
+                const existente = cargosAgrupados.get(cargoId);
+
+                if (!existente) {
+                  cargosAgrupados.set(cargoId, {
+                    cargo,
+                    activo: asignacion.activo !== false && cargo?.activo !== false,
+                    predeterminado: asignacion.perfil_predeterminado === true,
+                    roles: asignacion.rol?.nombre ? [asignacion.rol.nombre] : [],
+                  });
+                } else {
+                  existente.activo = existente.activo || (asignacion.activo !== false && cargo?.activo !== false);
+                  existente.predeterminado = existente.predeterminado || asignacion.perfil_predeterminado === true;
+                  if (asignacion.rol?.nombre && !existente.roles.includes(asignacion.rol.nombre)) {
+                    existente.roles.push(asignacion.rol.nombre);
+                  }
+                }
+              }
+
+              const cargos = Array.from(cargosAgrupados.values());
+
+              if (!cargos.length) {
+                return (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-white p-5 text-center">
+                    <p className="text-sm font-medium text-slate-500">
+                      No hay cargos asociados a este usuario.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {cargos.map((item, index) => {
+                    const departamento = item.cargo?.departamento;
+                    const area = departamento?.area;
+
+                    return (
+                      <div
+                        key={`${item.cargo?.id || "cargo"}-${index}`}
+                        className={`rounded-xl border bg-white p-4 ${
+                          item.activo
+                            ? "border-slate-200"
+                            : "border-slate-200 opacity-70"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Cargo {index + 1}
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-slate-800">
+                              {item.cargo?.nombre || "Cargo sin nombre"}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                              item.activo
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {item.activo ? "Activo" : "Inactivo"}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs">
+                          <div>
+                            <p className="text-slate-400">Departamento</p>
+                            <p className="font-medium text-slate-700">
+                              {departamento?.nombre || "—"}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="text-slate-400">Área</p>
+                            <p className="font-medium text-slate-700">
+                              {area?.nombre || "—"}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="text-slate-400">Rol{item.roles.length === 1 ? "" : "es"}</p>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {item.roles.length ? (
+                                item.roles.map((rol) => (
+                                  <span
+                                    key={rol}
+                                    className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700"
+                                  >
+                                    {rol}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-slate-500">Sin rol</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {item.predeterminado && (
+                          <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-700">
+                            Perfil predeterminado
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </section>
 
           {/* CONTACTO */}

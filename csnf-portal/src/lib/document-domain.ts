@@ -60,129 +60,86 @@ export function jsonOk(data: Record<string, unknown> = {}) {
    AUTENTICACIÓN
 ============================================================ */
 
-/* ============================================================
-   AUTENTICACIÓN POR BEARER
-============================================================ */
+export async function getProfileFromBearer(request: Request) {
+  const auth = request.headers.get("authorization") || "";
 
-export async function getProfileFromBearer(
-  request: Request
-) {
-  const auth =
-    request.headers.get("authorization") || "";
-
-  const token =
-    auth.startsWith("Bearer ")
-      ? auth.slice(7).trim()
-      : "";
-
-  // ----------------------------------------------------------
-  // TOKEN
-  // ----------------------------------------------------------
+  const token = auth.startsWith("Bearer ")
+    ? auth.slice(7).trim()
+    : "";
 
   if (!token) {
-    console.error(
-      "[AUTH] No se recibió Authorization Bearer."
-    );
-
     return null;
   }
 
-  const supabase =
-    supabaseAdmin();
-
-  // ----------------------------------------------------------
-  // VALIDAR TOKEN CONTRA SUPABASE AUTH
-  // ----------------------------------------------------------
+  const supabase = supabaseAdmin();
 
   const {
-    data: authData,
-    error: authError,
-  } =
-    await supabase.auth.getUser(token);
+    data,
+    error,
+  } = await supabase.auth.getUser(token);
 
-  if (authError) {
-    console.error(
-      "[AUTH] Error validando access_token:",
-      authError.message
-    );
-
+  if (error || !data.user) {
     return null;
   }
-
-  if (!authData?.user) {
-    console.error(
-      "[AUTH] Supabase no devolvió usuario para el token."
-    );
-
-    return null;
-  }
-
-  const authUser =
-    authData.user;
-
-  console.info(
-    "[AUTH] Usuario Auth validado:",
-    authUser.id
-  );
-
-  // ----------------------------------------------------------
-  // BUSCAR PERFIL EN usuarios
-  // ----------------------------------------------------------
 
   const {
     data: profile,
     error: profileError,
-  } =
-    await supabase
-      .from("usuarios")
-      .select(
-        `
-        id,
-        auth_user_id,
-        nombres,
-        apellidos,
-        razon_social,
-        cargo_id
-        `
-      )
-      .eq(
-        "auth_user_id",
-        authUser.id
-      )
+  } = await supabase
+    .from("usuarios")
+    .select(
+      "id,auth_user_id,nombres,apellidos,razon_social,cargo_id"
+    )
+    .eq("auth_user_id", data.user.id)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    return null;
+  }
+
+  // ------------------------------------------------------------
+  // PERFIL MULTICARGO SELECCIONADO
+  // ------------------------------------------------------------
+  // La selección del navegador se conserva en una cookie emitida
+  // por /api/auth/seleccionar-perfil. La cookie NO se considera
+  // confiable por sí misma: siempre verificamos que la asignación
+  // pertenezca al usuario autenticado y que continúe activa.
+  // ------------------------------------------------------------
+
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookieMatch = cookieHeader.match(/(?:^|;\s*)csnf_asignacion_activa=([^;]+)/);
+  const selectedAssignmentId =
+    request.headers.get("x-asignacion-id")?.trim() ||
+    (cookieMatch ? decodeURIComponent(cookieMatch[1]) : "");
+
+  let selectedAssignment: any = null;
+
+  if (selectedAssignmentId) {
+    const { data: assignment, error: assignmentError } = await supabase
+      .from("usuarios_asignaciones")
+      .select("id,usuario_id,cargo_id,rol_id,activo,perfil_predeterminado")
+      .eq("id", selectedAssignmentId)
+      .eq("usuario_id", profile.id)
+      .eq("activo", true)
       .maybeSingle();
 
-  if (profileError) {
-    console.error(
-      "[AUTH] Error buscando perfil en usuarios:",
-      profileError.message
-    );
-
-    return null;
+    if (!assignmentError && assignment) {
+      selectedAssignment = assignment;
+    }
   }
-
-  if (!profile) {
-    console.error(
-      "[AUTH] El usuario Auth existe pero no tiene perfil asociado en usuarios.",
-      {
-        auth_user_id: authUser.id,
-      }
-    );
-
-    return null;
-  }
-
-  // ----------------------------------------------------------
-  // PERFIL CORRECTO
-  // ----------------------------------------------------------
-
-  console.info(
-    "[AUTH] Perfil encontrado:",
-    profile.id
-  );
 
   return {
-    authUser,
-    profile,
+    authUser: data.user,
+    profile: {
+      ...profile,
+      // Estas propiedades adicionales son compatibles con los
+      // consumidores existentes y permiten conocer el contexto
+      // seleccionado cuando el endpoint lo necesite.
+      selected_asignacion_id: selectedAssignment?.id ?? null,
+      selected_cargo_id: selectedAssignment?.cargo_id ?? null,
+      selected_rol_id: selectedAssignment?.rol_id ?? null,
+    },
+    assignment: selectedAssignment,
   };
 }
 
