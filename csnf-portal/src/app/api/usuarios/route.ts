@@ -357,40 +357,35 @@ export async function GET(request: NextRequest) {
 
 /* ============================================================
    POST /api/usuarios
+
+   REGLA DE NEGOCIO:
+   - Una persona/identidad existe una sola vez en `usuarios`.
+   - Una persona puede tener múltiples registros en
+     `usuarios_asignaciones` (cargo + rol).
+   - Si la identificación ya existe, NO se crea otro usuario de
+     Supabase Auth ni otro registro en `usuarios`: se agrega o
+     reactiva una asignación.
 ============================================================ */
 
 export async function POST(
   request: NextRequest
 ) {
-  let authUserId:
-    | string
-    | null = null;
-
-  let usuarioCreadoId:
-    | string
-    | null = null;
+  let authUserId: string | null = null;
+  let usuarioCreadoId: string | null = null;
 
   try {
-    const actor =
-      await getProfileFromBearer(
-        request
-      );
+    const actor = await getProfileFromBearer(request);
 
     if (!actor) {
-      return jsonError(
-        "Sesión no válida.",
-        401
-      );
+      return jsonError("Sesión no válida.", 401);
     }
 
-    const supabase =
-      supabaseAdmin();
+    const supabase = supabaseAdmin();
 
     let body: AnyRecord;
 
     try {
-      body =
-        await request.json();
+      body = await request.json();
     } catch {
       return jsonError(
         "El cuerpo de la solicitud no contiene JSON válido.",
@@ -398,139 +393,33 @@ export async function POST(
       );
     }
 
-    const email =
-      normalizarEmail(
-        body.email
-      );
-
-    const password =
-      texto(body.password);
-
-    const tipoPersonaId =
-      texto(
-        body.tipo_persona_id
-      );
-
-    const tipoIdentificacionId =
-      texto(
-        body.tipo_identificacion_id
-      );
-
-    const numeroIdentificacion =
-      texto(
-        body.numero_identificacion
-      );
-
-    const nombres =
-      texto(body.nombres);
-
-    const apellidos =
-      texto(body.apellidos);
-
-    const razonSocial =
-      texto(
-        body.razon_social
-      );
-
-    const telefono =
-      nullable(
-        body.telefono
-      );
-
-    const direccion =
-      nullable(
-        body.direccion
-      );
-
-    const fechaIngreso =
-      nullable(
-        body.fecha_ingreso
-      );
-
-    const fechaRetiro =
-      nullable(
-        body.fecha_retiro
-      );
-
-    const departamentoId =
-      nullable(
-        body.departamento_id
-      );
-
-    const cargoId =
-      nullable(
-        body.cargo_id
-      );
-
-    const rolId =
-      texto(body.rol_id);
-
-    const estadoUsuarioId =
-      texto(
-        body.estado_usuario_id
-      );
-
-    const claveRepositorio =
-      nullable(
-        body.clave_repositorio
-      );
-
-    const puedeIniciarFlujos =
-      body.puede_iniciar_flujos === true;
-
-    const perfilPredeterminado =
-      body.perfil_predeterminado !==
-      false;
+    const email = normalizarEmail(body.email);
+    const password = texto(body.password);
+    const tipoPersonaId = texto(body.tipo_persona_id);
+    const tipoIdentificacionId = texto(body.tipo_identificacion_id);
+    const numeroIdentificacion = texto(body.numero_identificacion);
+    const nombres = texto(body.nombres);
+    const apellidos = texto(body.apellidos);
+    const razonSocial = texto(body.razon_social);
+    const telefono = nullable(body.telefono);
+    const direccion = nullable(body.direccion);
+    const fechaIngreso = nullable(body.fecha_ingreso);
+    const fechaRetiro = nullable(body.fecha_retiro);
+    const departamentoId = nullable(body.departamento_id);
+    const cargoId = nullable(body.cargo_id);
+    const rolId = texto(body.rol_id);
+    const estadoUsuarioId = texto(body.estado_usuario_id);
+    const claveRepositorio = nullable(body.clave_repositorio);
+    const puedeIniciarFlujos = body.puede_iniciar_flujos === true;
+    const perfilPredeterminado = body.perfil_predeterminado !== false;
 
     /* ----------------------------------------------------------
-       VALIDACIONES BÁSICAS
+       VALIDACIONES COMUNES
     ---------------------------------------------------------- */
-
-    if (!email) {
-      return jsonError(
-        "El correo electrónico es obligatorio.",
-        400
-      );
-    }
-
-    if (!password) {
-      return jsonError(
-        "La contraseña es obligatoria.",
-        400
-      );
-    }
-
-    if (password.length < 6) {
-      return jsonError(
-        "La contraseña debe tener mínimo 6 caracteres.",
-        400
-      );
-    }
-
-    if (!tipoPersonaId) {
-      return jsonError(
-        "El tipo de persona es obligatorio.",
-        400
-      );
-    }
-
-    if (!tipoIdentificacionId) {
-      return jsonError(
-        "El tipo de identificación es obligatorio.",
-        400
-      );
-    }
 
     if (!numeroIdentificacion) {
       return jsonError(
         "El número de identificación es obligatorio.",
-        400
-      );
-    }
-
-    if (!departamentoId) {
-      return jsonError(
-        "El departamento es obligatorio.",
         400
       );
     }
@@ -557,6 +446,136 @@ export async function POST(
     }
 
     /* ----------------------------------------------------------
+       BUSCAR PERSONA EXISTENTE
+
+       La identificación identifica a la persona, no a la
+       asignación. Por eso una coincidencia NO es un error:
+       significa que debemos agregar otro cargo/rol.
+    ---------------------------------------------------------- */
+
+    const {
+      data: usuarioExistente,
+      error: identificacionError,
+    } = await supabase
+      .from("usuarios")
+      .select(`
+        id,
+        auth_user_id,
+        email,
+        tipo_persona_id,
+        tipo_identificacion_id,
+        numero_identificacion,
+        nombres,
+        apellidos,
+        razon_social,
+        telefono,
+        direccion,
+        estado_usuario_id,
+        fecha_ingreso,
+        fecha_retiro,
+        cargo_id,
+        clave_repositorio,
+        puede_iniciar_flujos
+      `)
+      .eq("numero_identificacion", numeroIdentificacion)
+      .maybeSingle();
+
+    if (identificacionError) {
+      return jsonError(
+        `No fue posible consultar el usuario existente: ${identificacionError.message}`,
+        500
+      );
+    }
+
+    const esNuevaPersona = !usuarioExistente;
+
+    /* ----------------------------------------------------------
+       PERSONA NUEVA
+
+       Para una persona nueva sí son obligatorios correo y
+       contraseña porque debemos crear su identidad en Auth.
+    ---------------------------------------------------------- */
+
+    let tipoPersonaFinal = tipoPersonaId;
+    let tipoIdentificacionFinal = tipoIdentificacionId;
+    let estadoUsuarioFinal = estadoUsuarioId;
+    let nombresFinal = nombres;
+    let apellidosFinal = apellidos;
+    let razonSocialFinal = razonSocial;
+
+    if (esNuevaPersona) {
+      if (!email) {
+        return jsonError(
+          "El correo electrónico es obligatorio para crear un usuario nuevo.",
+          400
+        );
+      }
+
+      if (!password) {
+        return jsonError(
+          "La contraseña es obligatoria para crear un usuario nuevo.",
+          400
+        );
+      }
+
+      if (password.length < 6) {
+        return jsonError(
+          "La contraseña debe tener mínimo 6 caracteres.",
+          400
+        );
+      }
+
+      if (!tipoPersonaFinal) {
+        return jsonError(
+          "El tipo de persona es obligatorio.",
+          400
+        );
+      }
+
+      if (!tipoIdentificacionFinal) {
+        return jsonError(
+          "El tipo de identificación es obligatorio.",
+          400
+        );
+      }
+    } else {
+      /* --------------------------------------------------------
+         PERSONA EXISTENTE
+
+         Los datos de identidad se conservan desde `usuarios`.
+         No creamos Auth nuevamente y no modificamos datos
+         personales solo por agregar un cargo.
+      -------------------------------------------------------- */
+
+      tipoPersonaFinal =
+        usuarioExistente.tipo_persona_id || tipoPersonaFinal;
+
+      tipoIdentificacionFinal =
+        usuarioExistente.tipo_identificacion_id ||
+        tipoIdentificacionFinal;
+
+      estadoUsuarioFinal =
+        usuarioExistente.estado_usuario_id || estadoUsuarioFinal;
+
+      nombresFinal =
+        usuarioExistente.nombres || nombresFinal;
+
+      apellidosFinal =
+        usuarioExistente.apellidos || apellidosFinal;
+
+      razonSocialFinal =
+        usuarioExistente.razon_social || razonSocialFinal;
+
+      if (email && usuarioExistente.email &&
+          normalizarEmail(usuarioExistente.email) !== email) {
+        return jsonError(
+          "La identificación ya pertenece a un usuario con otro correo electrónico. Para agregar un cargo no debe cambiarse la identidad del usuario.",
+          409
+        );
+      }
+    }
+
+    /* ----------------------------------------------------------
        TIPO PERSONA
     ---------------------------------------------------------- */
 
@@ -565,20 +584,12 @@ export async function POST(
       error: tipoPersonaError,
     } = await supabase
       .from("tipos_persona")
-      .select(
-        "id,codigo,nombre,activo"
-      )
-      .eq(
-        "id",
-        tipoPersonaId
-      )
+      .select("id,codigo,nombre,activo")
+      .eq("id", tipoPersonaFinal)
       .maybeSingle();
 
     if (tipoPersonaError) {
-      return jsonError(
-        tipoPersonaError.message,
-        500
-      );
+      return jsonError(tipoPersonaError.message, 500);
     }
 
     if (!tipoPersona) {
@@ -595,43 +606,30 @@ export async function POST(
       );
     }
 
-    const codigoTipoPersona =
-      normalizarCodigo(
-        tipoPersona.codigo
-      );
-
-    const nombreTipoPersona =
-      normalizarCodigo(
-        tipoPersona.nombre
-      );
+    const codigoTipoPersona = normalizarCodigo(tipoPersona.codigo);
+    const nombreTipoPersona = normalizarCodigo(tipoPersona.nombre);
 
     const esJuridica =
-      codigoTipoPersona.includes(
-        "JUR"
-      ) ||
-      nombreTipoPersona.includes(
-        "JURID"
-      ) ||
-      nombreTipoPersona.includes(
-        "EMPRESA"
-      );
+      codigoTipoPersona.includes("JUR") ||
+      nombreTipoPersona.includes("JURID") ||
+      nombreTipoPersona.includes("EMPRESA");
 
     if (esJuridica) {
-      if (!razonSocial) {
+      if (!razonSocialFinal) {
         return jsonError(
           "La razón social es obligatoria para una persona jurídica.",
           400
         );
       }
     } else {
-      if (!nombres) {
+      if (!nombresFinal) {
         return jsonError(
           "Los nombres son obligatorios.",
           400
         );
       }
 
-      if (!apellidos) {
+      if (!apellidosFinal) {
         return jsonError(
           "Los apellidos son obligatorios.",
           400
@@ -645,17 +643,11 @@ export async function POST(
 
     const {
       data: tipoIdentificacion,
-      error:
-        tipoIdentificacionError,
+      error: tipoIdentificacionError,
     } = await supabase
       .from("tipos_identificacion")
-      .select(
-        "id,codigo,nombre,activo,tipo_persona_id"
-      )
-      .eq(
-        "id",
-        tipoIdentificacionId
-      )
+      .select("id,codigo,nombre,activo,tipo_persona_id")
+      .eq("id", tipoIdentificacionFinal)
       .maybeSingle();
 
     if (tipoIdentificacionError) {
@@ -681,8 +673,7 @@ export async function POST(
 
     if (
       tipoIdentificacion.tipo_persona_id &&
-      tipoIdentificacion.tipo_persona_id !==
-        tipoPersonaId
+      tipoIdentificacion.tipo_persona_id !== tipoPersonaFinal
     ) {
       return jsonError(
         "El tipo de identificación no corresponde al tipo de persona seleccionado.",
@@ -691,38 +682,7 @@ export async function POST(
     }
 
     /* ----------------------------------------------------------
-       IDENTIFICACIÓN DUPLICADA
-    ---------------------------------------------------------- */
-
-    const {
-      data: usuarioExistente,
-      error:
-        identificacionError,
-    } = await supabase
-      .from("usuarios")
-      .select("id")
-      .eq(
-        "numero_identificacion",
-        numeroIdentificacion
-      )
-      .maybeSingle();
-
-    if (identificacionError) {
-      return jsonError(
-        identificacionError.message,
-        500
-      );
-    }
-
-    if (usuarioExistente) {
-      return jsonError(
-        "Ya existe un usuario registrado con ese número de identificación.",
-        409
-      );
-    }
-
-    /* ----------------------------------------------------------
-       ESTADO
+       ESTADO DEL USUARIO
     ---------------------------------------------------------- */
 
     const {
@@ -730,20 +690,12 @@ export async function POST(
       error: estadoError,
     } = await supabase
       .from("estados_usuario")
-      .select(
-        "id,codigo,nombre,activo"
-      )
-      .eq(
-        "id",
-        estadoUsuarioId
-      )
+      .select("id,codigo,nombre,activo")
+      .eq("id", estadoUsuarioFinal)
       .maybeSingle();
 
     if (estadoError) {
-      return jsonError(
-        estadoError.message,
-        500
-      );
+      return jsonError(estadoError.message, 500);
     }
 
     if (!estado) {
@@ -769,13 +721,8 @@ export async function POST(
       error: departamentoError,
     } = await supabase
       .from("departamentos")
-      .select(
-        "id,nombre,activo"
-      )
-      .eq(
-        "id",
-        departamentoId
-      )
+      .select("id,nombre,activo,area_id")
+      .eq("id", departamentoId)
       .maybeSingle();
 
     if (departamentoError) {
@@ -808,20 +755,12 @@ export async function POST(
       error: cargoError,
     } = await supabase
       .from("cargos")
-      .select(
-        "id,nombre,departamento_id,activo"
-      )
-      .eq(
-        "id",
-        cargoId
-      )
+      .select("id,nombre,departamento_id,activo")
+      .eq("id", cargoId)
       .maybeSingle();
 
     if (cargoError) {
-      return jsonError(
-        cargoError.message,
-        500
-      );
+      return jsonError(cargoError.message, 500);
     }
 
     if (!cargo) {
@@ -838,10 +777,7 @@ export async function POST(
       );
     }
 
-    if (
-      cargo.departamento_id !==
-      departamentoId
-    ) {
+    if (cargo.departamento_id !== departamentoId) {
       return jsonError(
         "El cargo seleccionado no pertenece al departamento seleccionado.",
         400
@@ -857,20 +793,12 @@ export async function POST(
       error: rolError,
     } = await supabase
       .from("roles")
-      .select(
-        "id,codigo,nombre,activo"
-      )
-      .eq(
-        "id",
-        rolId
-      )
+      .select("id,codigo,nombre,activo")
+      .eq("id", rolId)
       .maybeSingle();
 
     if (rolError) {
-      return jsonError(
-        rolError.message,
-        500
-      );
+      return jsonError(rolError.message, 500);
     }
 
     if (!rol) {
@@ -888,35 +816,231 @@ export async function POST(
     }
 
     /* ----------------------------------------------------------
-       CREAR AUTH
+       PERSONA EXISTENTE → AGREGAR/REACTIVAR ASIGNACIÓN
+    ---------------------------------------------------------- */
+
+    if (!esNuevaPersona) {
+      const usuarioId = usuarioExistente.id;
+
+      const {
+        data: asignaciones,
+        error: asignacionesError,
+      } = await supabase
+        .from("usuarios_asignaciones")
+        .select(`
+          id,
+          usuario_id,
+          cargo_id,
+          rol_id,
+          activo,
+          perfil_predeterminado
+        `)
+        .eq("usuario_id", usuarioId);
+
+      if (asignacionesError) {
+        return jsonError(
+          `No fue posible consultar las asignaciones existentes: ${asignacionesError.message}`,
+          500
+        );
+      }
+
+      const asignacionMisma =
+        (asignaciones || []).find(
+          (a) =>
+            a.cargo_id === cargoId &&
+            a.rol_id === rolId
+        );
+
+      /* --------------------------------------------------------
+         SI YA EXISTE LA MISMA COMBINACIÓN
+      -------------------------------------------------------- */
+
+      if (asignacionMisma) {
+        if (asignacionMisma.activo) {
+          return jsonError(
+            "El usuario ya tiene asignado ese cargo y rol.",
+            409
+          );
+        }
+
+        /* ------------------------------------------------------
+           SI EXISTÍA PERO ESTABA INACTIVA → REACTIVAR
+        ------------------------------------------------------ */
+
+        if (perfilPredeterminado) {
+          const { error: quitarPredeterminadosError } =
+            await supabase
+              .from("usuarios_asignaciones")
+              .update({ perfil_predeterminado: false })
+              .eq("usuario_id", usuarioId)
+              .eq("activo", true);
+
+          if (quitarPredeterminadosError) {
+            return jsonError(
+              `No fue posible actualizar el perfil predeterminado: ${quitarPredeterminadosError.message}`,
+              500
+            );
+          }
+        }
+
+        const { data: asignacionReactivada, error: reactivarError } =
+          await supabase
+            .from("usuarios_asignaciones")
+            .update({
+              activo: true,
+              perfil_predeterminado: perfilPredeterminado,
+            })
+            .eq("id", asignacionMisma.id)
+            .select(`
+              id,
+              usuario_id,
+              cargo_id,
+              rol_id,
+              activo,
+              perfil_predeterminado
+            `)
+            .single();
+
+        if (reactivarError) {
+          return jsonError(
+            `No fue posible reactivar la asignación: ${reactivarError.message}`,
+            500
+          );
+        }
+
+        if (perfilPredeterminado) {
+          const { error: usuarioCargoError } = await supabase
+            .from("usuarios")
+            .update({
+              cargo_id: cargoId,
+              updated_by: actor.profile.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", usuarioId);
+
+          if (usuarioCargoError) {
+            return jsonError(
+              `La asignación fue reactivada, pero no fue posible actualizar el cargo predeterminado: ${usuarioCargoError.message}`,
+              500
+            );
+          }
+        }
+
+        return jsonOk({
+          message: "La asignación existente fue reactivada correctamente.",
+          usuario: usuarioExistente,
+          asignacion: asignacionReactivada,
+          asignacion_existente: true,
+          asignacion_reactivada: true,
+        });
+      }
+
+      /* --------------------------------------------------------
+         NUEVA ASIGNACIÓN PARA PERSONA EXISTENTE
+      -------------------------------------------------------- */
+
+      const asignacionesActivas =
+        (asignaciones || []).filter(
+          (a) => a.activo === true
+        );
+
+      const tienePredeterminada =
+        asignacionesActivas.some(
+          (a) => a.perfil_predeterminado === true
+        );
+
+      const hacerPredeterminada =
+        perfilPredeterminado || !tienePredeterminada;
+
+      if (hacerPredeterminada) {
+        const { error: quitarPredeterminadosError } =
+          await supabase
+            .from("usuarios_asignaciones")
+            .update({ perfil_predeterminado: false })
+            .eq("usuario_id", usuarioId)
+            .eq("activo", true);
+
+        if (quitarPredeterminadosError) {
+          return jsonError(
+            `No fue posible actualizar el perfil predeterminado: ${quitarPredeterminadosError.message}`,
+            500
+          );
+        }
+      }
+
+      const {
+        data: nuevaAsignacion,
+        error: nuevaAsignacionError,
+      } = await supabase
+        .from("usuarios_asignaciones")
+        .insert({
+          usuario_id: usuarioId,
+          cargo_id: cargoId,
+          rol_id: rolId,
+          activo: true,
+          perfil_predeterminado: hacerPredeterminada,
+        })
+        .select(`
+          id,
+          usuario_id,
+          cargo_id,
+          rol_id,
+          activo,
+          perfil_predeterminado
+        `)
+        .single();
+
+      if (nuevaAsignacionError) {
+        return jsonError(
+          `No fue posible registrar la nueva asignación: ${nuevaAsignacionError.message}`,
+          500
+        );
+      }
+
+      if (hacerPredeterminada) {
+        const { error: usuarioCargoError } = await supabase
+          .from("usuarios")
+          .update({
+            cargo_id: cargoId,
+            updated_by: actor.profile.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", usuarioId);
+
+        if (usuarioCargoError) {
+          return jsonError(
+            `La asignación fue creada, pero no fue posible actualizar el cargo predeterminado: ${usuarioCargoError.message}`,
+            500
+          );
+        }
+      }
+
+      return jsonOk({
+        message: "La nueva asignación fue creada correctamente.",
+        usuario: usuarioExistente,
+        asignacion: nuevaAsignacion,
+        asignacion_existente: false,
+        usuario_existente: true,
+      });
+    }
+
+    /* ----------------------------------------------------------
+       PERSONA NUEVA → CREAR AUTH
     ---------------------------------------------------------- */
 
     const {
       data: authData,
       error: authError,
-    } =
-      await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-
-        user_metadata: {
-          nombres:
-            esJuridica
-              ? null
-              : nombres,
-
-          apellidos:
-            esJuridica
-              ? null
-              : apellidos,
-
-          razon_social:
-            esJuridica
-              ? razonSocial
-              : null,
-        },
-      });
+    } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        nombres: esJuridica ? null : nombresFinal,
+        apellidos: esJuridica ? null : apellidosFinal,
+        razon_social: esJuridica ? razonSocialFinal : null,
+      },
+    });
 
     if (authError) {
       console.error(
@@ -924,14 +1048,10 @@ export async function POST(
         authError
       );
 
-      return jsonError(
-        authError.message,
-        400
-      );
+      return jsonError(authError.message, 400);
     }
 
-    authUserId =
-      authData.user?.id || null;
+    authUserId = authData.user?.id || null;
 
     if (!authUserId) {
       return jsonError(
@@ -944,77 +1064,36 @@ export async function POST(
        INSERT usuarios
     ---------------------------------------------------------- */
 
-    const usuarioInsert:
-      AnyRecord = {
+    const usuarioInsert: AnyRecord = {
       id: authUserId,
-      auth_user_id:
-        authUserId,
-
+      auth_user_id: authUserId,
       email,
-
-      tipo_persona_id:
-        tipoPersonaId,
-
-      tipo_identificacion_id:
-        tipoIdentificacionId,
-
-      numero_identificacion:
-        numeroIdentificacion,
-
-      nombres:
-        esJuridica
-          ? null
-          : nombres,
-
-      apellidos:
-        esJuridica
-          ? null
-          : apellidos,
-
-      razon_social:
-        esJuridica
-          ? razonSocial
-          : null,
-
+      tipo_persona_id: tipoPersonaFinal,
+      tipo_identificacion_id: tipoIdentificacionFinal,
+      numero_identificacion: numeroIdentificacion,
+      nombres: esJuridica ? null : nombresFinal,
+      apellidos: esJuridica ? null : apellidosFinal,
+      razon_social: esJuridica ? razonSocialFinal : null,
       telefono,
       direccion,
-
-      estado_usuario_id:
-        estadoUsuarioId,
-
-      fecha_ingreso:
-        fechaIngreso,
-
-      fecha_retiro:
-        fechaRetiro,
-
-      cargo_id:
-        cargoId,
-
-      clave_repositorio:
-        claveRepositorio,
-
-      puede_iniciar_flujos:
-        puedeIniciarFlujos,
-
-      created_by:
-        actor.profile.id,
-
-      updated_by:
-        actor.profile.id,
+      estado_usuario_id: estadoUsuarioFinal,
+      fecha_ingreso: fechaIngreso,
+      fecha_retiro: fechaRetiro,
+      cargo_id: cargoId,
+      clave_repositorio: claveRepositorio,
+      puede_iniciar_flujos: puedeIniciarFlujos,
+      created_by: actor.profile.id,
+      updated_by: actor.profile.id,
     };
 
     const {
       data: usuario,
       error: usuarioError,
-    } =
-      await supabase
-        .from("usuarios")
-        .insert(
-          usuarioInsert
-        )
-        .select("*")
-        .single();
+    } = await supabase
+      .from("usuarios")
+      .insert(usuarioInsert)
+      .select("*")
+      .single();
 
     if (usuarioError) {
       console.error(
@@ -1022,9 +1101,7 @@ export async function POST(
         usuarioError
       );
 
-      await supabase.auth.admin.deleteUser(
-        authUserId
-      );
+      await supabase.auth.admin.deleteUser(authUserId);
 
       return jsonError(
         usuarioError.message,
@@ -1032,45 +1109,33 @@ export async function POST(
       );
     }
 
-    usuarioCreadoId =
-      usuario.id;
+    usuarioCreadoId = usuario.id;
 
     /* ----------------------------------------------------------
-       ASIGNACIÓN
+       ASIGNACIÓN INICIAL
     ---------------------------------------------------------- */
 
     const {
       data: asignacion,
       error: asignacionError,
-    } =
-      await supabase
-        .from(
-          "usuarios_asignaciones"
-        )
-        .insert({
-          usuario_id:
-            usuario.id,
-
-          cargo_id:
-            cargoId,
-
-          rol_id:
-            rolId,
-
-          activo: true,
-
-          perfil_predeterminado:
-            perfilPredeterminado,
-        })
-        .select(`
-          id,
-          usuario_id,
-          cargo_id,
-          rol_id,
-          activo,
-          perfil_predeterminado
-        `)
-        .single();
+    } = await supabase
+      .from("usuarios_asignaciones")
+      .insert({
+        usuario_id: usuario.id,
+        cargo_id: cargoId,
+        rol_id: rolId,
+        activo: true,
+        perfil_predeterminado: true,
+      })
+      .select(`
+        id,
+        usuario_id,
+        cargo_id,
+        rol_id,
+        activo,
+        perfil_predeterminado
+      `)
+      .single();
 
     if (asignacionError) {
       console.error(
@@ -1081,14 +1146,9 @@ export async function POST(
       await supabase
         .from("usuarios")
         .delete()
-        .eq(
-          "id",
-          usuario.id
-        );
+        .eq("id", usuario.id);
 
-      await supabase.auth.admin.deleteUser(
-        authUserId
-      );
+      await supabase.auth.admin.deleteUser(authUserId);
 
       return jsonError(
         `No fue posible registrar la asignación del usuario: ${asignacionError.message}`,
@@ -1096,16 +1156,13 @@ export async function POST(
       );
     }
 
-    return jsonOk(
-      {
-        message:
-          "Usuario creado correctamente.",
-
-        usuario,
-
-        asignacion,
-      },
-    );
+    return jsonOk({
+      message: "Usuario creado correctamente.",
+      usuario,
+      asignacion,
+      usuario_existente: false,
+      asignacion_existente: false,
+    });
   } catch (error: any) {
     console.error(
       "POST /api/usuarios:",
@@ -1115,19 +1172,14 @@ export async function POST(
     /*
      * Protección adicional.
      *
-     * Si Auth fue creado pero ocurrió
-     * un error inesperado después,
-     * intentamos limpiar.
+     * Si Auth fue creado pero ocurrió un error inesperado antes
+     * de completar la creación del registro `usuarios`, intentamos
+     * limpiar la identidad creada.
      */
-    if (
-      authUserId &&
-      !usuarioCreadoId
-    ) {
+    if (authUserId && !usuarioCreadoId) {
       try {
         await supabaseAdmin()
-          .auth.admin.deleteUser(
-            authUserId
-          );
+          .auth.admin.deleteUser(authUserId);
       } catch (rollbackError) {
         console.error(
           "Error en rollback Auth:",
